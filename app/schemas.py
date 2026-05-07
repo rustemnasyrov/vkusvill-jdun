@@ -1,0 +1,67 @@
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+
+class ShiftInstanceOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    location_id: uuid.UUID
+    starts_at: datetime
+    ends_at: datetime
+    capacity: int
+    booked_count: int
+    closed_by_admin: bool
+
+
+class AssignmentOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    shift_instance_id: uuid.UUID
+    status: str
+    starts_at: datetime
+    ends_at: datetime
+    created_at: datetime
+
+
+class BookAssignmentBody(BaseModel):
+    shift_instance_id: uuid.UUID
+
+
+class ShiftTemplateCreate(BaseModel):
+    location_id: uuid.UUID
+    day_of_week: int = Field(ge=0, le=6)
+    start_time: str  # "HH:MM:SS" or "HH:MM"
+    duration_minutes: int = Field(gt=0)
+    capacity: int = Field(gt=0)
+
+
+class ShiftInstanceCreate(BaseModel):
+    location_id: uuid.UUID
+    starts_at: datetime
+    ends_at: datetime
+    capacity: int = Field(gt=0)
+    booking_opens_at: datetime | None = None
+    booking_closes_at: datetime | None = None
+
+
+class GenerateWeekBody(BaseModel):
+    week_start: datetime = Field(description="Любой момент недели; берётся понедельник этой календарной недели")
+    template_ids: list[uuid.UUID] | None = None
+
+
+class LocationCreate(BaseModel):
+    name: str
+    timezone: str = "UTC"
+
+
+class CourierCreate(BaseModel):
+    external_ref: str | None = None
+    location_ids: list[uuid.UUID] = []
+
+
+class ShiftInstanceClosedBody(BaseModel):
+    closed: bool

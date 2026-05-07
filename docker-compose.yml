@@ -1,0 +1,51 @@
+services:
+  # Своя БД только внутри сети compose — порт на хост не пробрасываем,
+  # чтобы не конфликтовать с другими Postgres на машине.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: courier
+      POSTGRES_PASSWORD: courier
+      POSTGRES_DB: courier_shifts
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U courier -d courier_shifts"]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api.dev
+    ports:
+      - "9000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://courier:courier@postgres:5432/courier_shifts
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-change-me}
+      CORS_ORIGINS: http://localhost:9001,http://127.0.0.1:9001
+    volumes:
+      - ./app:/code/app
+      - ./alembic:/code/alembic
+      - ./alembic.ini:/code/alembic.ini
+      - ./pyproject.toml:/code/pyproject.toml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web.dev
+    ports:
+      - "9001:5173"
+    volumes:
+      - ./frontend:/app
+      - web_node_modules:/app/node_modules
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  web_node_modules:

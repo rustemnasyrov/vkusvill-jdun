@@ -1,0 +1,26 @@
+FROM python:3.12-slim-bookworm
+
+WORKDIR /code
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpq5 netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+COPY alembic.ini ./
+COPY alembic ./alembic
+COPY app ./app
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -e .
+
+COPY docker/entrypoint-api-dev.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENV PYTHONUNBUFFERED=1 \
+    PGHOST=postgres \
+    PGPORT=5432
+
+EXPOSE 8000
+
+ENTRYPOINT ["/entrypoint.sh"]
