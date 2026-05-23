@@ -56,6 +56,9 @@ class Courier(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     external_ref: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    phone: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
+    courier_type: Mapped[str] = mapped_column(String(16), nullable=False, default="teal")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
 
     locations: Mapped[list["Location"]] = relationship(

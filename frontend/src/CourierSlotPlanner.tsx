@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { addDays, localDateInputValue, startOfIsoWeekMonday } from "./dates";
-import type { LocationDto, ShiftSlot } from "./types";
+import type { AssignmentDto, CourierDto, LocationDto, ShiftSlot } from "./types";
 
 const API = "/api";
 const H_START = 7;
@@ -13,6 +13,12 @@ const TYPE_LABEL: Record<ShiftSlot["courier_type"], string> = {
   blue: "Вело",
   amber: "Авто",
   purple: "Мото",
+};
+const TYPE_ICON: Record<ShiftSlot["courier_type"], string> = {
+  teal: "🚶",
+  blue: "🚲",
+  amber: "🚗",
+  purple: "🏍️",
 };
 const TYPE_STYLES: Record<ShiftSlot["courier_type"], { bg: string; border: string; text: string }> = {
   teal: { bg: "#9FE1CB", border: "#5DCAA5", text: "#085041" },
@@ -47,6 +53,8 @@ type Props = {
   errorNotice?: string | null;
 };
 
+type PlannerTab = "slots" | "couriers" | "assignments";
+
 function adminHeaders(accessToken: string): HeadersInit {
   return { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
 }
@@ -79,6 +87,11 @@ function pad2(n: number) {
 
 function formatHm(d: Date) {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function formatDateTime(value: string) {
+  const d = new Date(value);
+  return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)} ${formatHm(d)}`;
 }
 
 function timeToMin(t: string) {
@@ -427,6 +440,313 @@ function LocationsModal({
   );
 }
 
+function CourierManager({
+  accessToken,
+  locations,
+}: {
+  accessToken: string;
+  locations: LocationDto[];
+}) {
+  const [couriers, setCouriers] = useState<CourierDto[]>([]);
+  const [assignments, setAssignments] = useState<AssignmentDto[]>([]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [courierType, setCourierType] = useState<ShiftSlot["courier_type"]>("teal");
+  const [locationIds, setLocationIds] = useState<string[]>(locations.map((location) => location.id));
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [couriersResponse, assignmentsResponse] = await Promise.all([
+        fetch(`${API}/admin/couriers`, { headers: adminHeaders(accessToken) }),
+        fetch(`${API}/admin/assignments`, { headers: adminHeaders(accessToken) }),
+      ]);
+      if (!couriersResponse.ok) throw new Error(await readApiError(couriersResponse));
+      if (!assignmentsResponse.ok) throw new Error(await readApiError(assignmentsResponse));
+      setCouriers(await couriersResponse.json());
+      setAssignments(await assignmentsResponse.json());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка загрузки курьеров");
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
+
+  async function createCourier() {
+    setError(null);
+    setMessage(null);
+    if (!fullName.trim() || !phone.trim()) {
+      setError("Заполните ФИО и телефон");
+      return;
+    }
+    try {
+      const response = await fetch(`${API}/admin/couriers`, {
+        method: "POST",
+        headers: adminHeaders(accessToken),
+        body: JSON.stringify({
+          full_name: fullName.trim(),
+          phone: phone.trim(),
+          courier_type: courierType,
+          location_ids: locationIds,
+        }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      setFullName("");
+      setPhone("");
+      setCourierType("teal");
+      setLocationIds(locations.map((location) => location.id));
+      setModalOpen(false);
+      setMessage("Курьер добавлен.");
+      await loadData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось добавить курьера");
+    }
+  }
+
+  async function setCourierStatus(courier: CourierDto, status: "active" | "blocked") {
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`${API}/admin/couriers/${courier.id}/status`, {
+        method: "PATCH",
+        headers: adminHeaders(accessToken),
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      setMessage(status === "blocked" ? "Курьер заблокирован." : "Курьер разблокирован.");
+      await loadData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось изменить статус курьера");
+    }
+  }
+
+  const assignmentsByCourier = useMemo(() => {
+    const map = new Map<string, AssignmentDto[]>();
+    for (const assignment of assignments) {
+      const list = map.get(assignment.courier_id) ?? [];
+      list.push(assignment);
+      map.set(assignment.courier_id, list);
+    }
+    return map;
+  }, [assignments]);
+
+  const filteredCouriers = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return couriers;
+    return couriers.filter((courier) =>
+      `${courier.full_name} ${courier.phone ?? ""} ${courier.external_ref ?? ""}`.toLowerCase().includes(needle),
+    );
+  }, [couriers, query]);
+
+  return (
+    <section style={{ display: "grid", gap: 16 }}>
+      {modalOpen ? (
+        <div style={{ position: "fixed", inset: 0, background: "rgb(15 23 42 / 0.35)", display: "grid", placeItems: "center", zIndex: 50, padding: 16 }}>
+          <div style={{ width: "min(560px, 100%)", background: "#fff", borderRadius: 18, padding: 20, boxShadow: "0 24px 80px rgb(15 23 42 / 0.25)" }}>
+            <h2 style={{ margin: "0 0 14px", fontSize: 22 }}>Новый курьер</h2>
+            <div style={{ display: "grid", gap: 12 }}>
+              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
+                ФИО
+                <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Иванов Иван Иванович" style={{ padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 10 }} autoFocus />
+              </label>
+              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
+                Телефон
+                <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+7 999 123-45-67" style={{ padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 10 }} />
+              </label>
+              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
+                Тип курьера
+                <select value={courierType} onChange={(e) => setCourierType(e.target.value as ShiftSlot["courier_type"])} style={{ padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 10 }}>
+                  {Object.entries(TYPE_LABEL).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {locations.map((location) => {
+                  const checked = locationIds.includes(location.id);
+                  return (
+                    <label key={location.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 10px", border: "1px solid #e5e7eb", borderRadius: 999, background: checked ? "#eefbf5" : "#fff", cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) =>
+                          setLocationIds((prev) =>
+                            e.target.checked ? [...prev, location.id] : prev.filter((id) => id !== location.id),
+                          )
+                        }
+                      />
+                      {location.name}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+              <button type="button" onClick={() => setModalOpen(false)} style={{ ...smallButtonStyle, width: "auto", padding: "9px 14px" }}>Отмена</button>
+              <button type="button" onClick={() => void createCourier()} style={{ padding: "9px 16px", border: "none", borderRadius: 10, background: "#1D9E75", color: "#fff", fontWeight: 700 }}>Добавить</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="courier-toolbar">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Поиск по ФИО или телефону"
+          style={{ flex: 1, minWidth: 220, padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 10 }}
+        />
+        <button type="button" onClick={() => setModalOpen(true)} style={{ padding: "10px 16px", border: "none", borderRadius: 10, background: "#1D9E75", color: "#fff", fontWeight: 700 }}>
+          + Добавить
+        </button>
+      </div>
+
+      {message ? <p style={{ color: "#15803d", margin: 0 }}>{message}</p> : null}
+      {error ? <p style={{ color: "#b91c1c", margin: 0 }}>{error}</p> : null}
+
+      <div className="courier-table-wrap">
+        <table className="courier-table">
+          <thead>
+            <tr>
+              <th className="courier-col-location">Локация</th>
+              <th className="courier-col-phone">Телефон</th>
+              <th className="courier-col-type">Тип</th>
+              <th className="courier-col-name">ФИО</th>
+              <th className="courier-col-slots">Слоты</th>
+              <th className="courier-col-status">Статус</th>
+              <th className="courier-col-action" />
+            </tr>
+          </thead>
+          <tbody>
+            {filteredCouriers.map((courier) => {
+              const courierAssignments = assignmentsByCourier.get(courier.id) ?? [];
+              const nextAssignment = courierAssignments[0];
+              return (
+                <tr key={courier.id}>
+                  <td className="courier-col-location">{courier.location_ids.map((id) => locations.find((l) => l.id === id)?.name ?? id.slice(0, 8)).join(", ") || "—"}</td>
+                  <td className="courier-col-phone">{courier.phone || courier.external_ref || "—"}</td>
+                  <td className="courier-col-type">
+                    <span
+                      className="courier-type-icon"
+                      title={TYPE_LABEL[courier.courier_type] ?? courier.courier_type}
+                      style={{
+                        background: TYPE_STYLES[courier.courier_type]?.bg ?? "#e5e7eb",
+                        borderColor: TYPE_STYLES[courier.courier_type]?.border ?? "#d1d5db",
+                        color: TYPE_STYLES[courier.courier_type]?.text ?? "#374151",
+                      }}
+                    >
+                      {TYPE_ICON[courier.courier_type] ?? "•"}
+                    </span>
+                  </td>
+                  <td className="courier-col-name"><strong>{courier.full_name || courier.external_ref || courier.id.slice(0, 8)}</strong></td>
+                  <td className="courier-col-slots" title={courierAssignments.map((assignment) => `${formatDateTime(assignment.starts_at)} - ${formatDateTime(assignment.ends_at)}`).join("\n")}>
+                    {courierAssignments.length}
+                    {nextAssignment ? ` · ${formatDateTime(nextAssignment.starts_at)}` : ""}
+                  </td>
+                  <td className="courier-col-status">
+                    <span className={courier.status === "active" ? "courier-status-active" : "courier-status-blocked"}>
+                      {courier.status === "active" ? "активен" : "заблокирован"}
+                    </span>
+                  </td>
+                  <td className="courier-col-action">
+                    <button
+                      type="button"
+                      onClick={() => void setCourierStatus(courier, courier.status === "active" ? "blocked" : "active")}
+                      style={{ ...smallButtonStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}
+                    >
+                      {courier.status === "active" ? "Блок" : "Вернуть"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {loading ? <p style={{ color: "#6b7280", margin: 12 }}>Загрузка...</p> : null}
+        {!loading && filteredCouriers.length === 0 ? <p style={{ color: "#6b7280", margin: 12 }}>Курьеры не найдены.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function AssignmentsManager({
+  accessToken,
+}: {
+  accessToken: string;
+}) {
+  const [assignments, setAssignments] = useState<AssignmentDto[]>([]);
+  const [couriers, setCouriers] = useState<CourierDto[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [assignmentsResponse, couriersResponse] = await Promise.all([
+        fetch(`${API}/admin/assignments`, { headers: adminHeaders(accessToken) }),
+        fetch(`${API}/admin/couriers`, { headers: adminHeaders(accessToken) }),
+      ]);
+      if (!assignmentsResponse.ok) throw new Error(await readApiError(assignmentsResponse));
+      if (!couriersResponse.ok) throw new Error(await readApiError(couriersResponse));
+      setAssignments(await assignmentsResponse.json());
+      setCouriers(await couriersResponse.json());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка загрузки назначений");
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
+
+  return (
+    <section style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <h2 style={{ margin: 0, fontSize: 20 }}>Назначения</h2>
+        <button type="button" onClick={() => void loadData()} style={{ ...smallButtonStyle, width: "auto", padding: "7px 12px", fontSize: 13 }}>
+          Обновить
+        </button>
+      </div>
+      {loading ? <p style={{ color: "#6b7280" }}>Загрузка...</p> : null}
+      {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
+      <div style={{ display: "grid", gap: 8 }}>
+        {assignments.map((assignment) => {
+          const courier = couriers.find((c) => c.id === assignment.courier_id);
+          return (
+            <article key={assignment.id} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 14 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <strong>{formatDateTime(assignment.starts_at)} - {formatDateTime(assignment.ends_at)}</strong>
+                <span style={{ color: "#6b7280" }}>·</span>
+                <span>{courier?.full_name || courier?.phone || assignment.courier_id.slice(0, 8)}</span>
+                <span style={{ padding: "3px 8px", borderRadius: 999, background: "#eef2ff", color: "#3730a3", fontSize: 12 }}>
+                  {assignment.status}
+                </span>
+              </div>
+              <div style={{ color: "#6b7280", fontSize: 12, marginTop: 5 }}>
+                Курьер: {assignment.courier_id} · Слот: {assignment.shift_instance_id}
+              </div>
+            </article>
+          );
+        })}
+        {!loading && assignments.length === 0 ? <p style={{ color: "#6b7280" }}>Назначений пока нет.</p> : null}
+      </div>
+    </section>
+  );
+}
+
 function NowMarker() {
   const [pct, setPct] = useState<number | null>(null);
   useEffect(() => {
@@ -526,6 +846,7 @@ function DayRow({
 }
 
 export default function CourierSlotPlanner({ accessToken, locations, adminName, onUnauthorized, onLogout, onRefreshLocations, onCreateLocation, notice, errorNotice }: Props) {
+  const [activeTab, setActiveTab] = useState<PlannerTab>("slots");
   const [weekOffset, setWeekOffset] = useState(0);
   const [slots, setSlots] = useState<PlannerSlot[]>([]);
   const [modal, setModal] = useState<{ slot: ModalSlot } | null>(null);
@@ -665,8 +986,21 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
 
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
         <img src="/logo-vkusvill-jdun.png" alt="ВкусВилл Ждун" style={{ display: "block", width: "clamp(160px, 24vw, 260px)", height: "auto", objectFit: "contain" }} />
-        <div>
-          <div style={{ color: "#6b7280", fontSize: 13, marginTop: 3 }}>Слоты курьеров по дням и типам доставки</div>
+        <div className="slot-tabs" role="tablist" aria-label="Разделы">
+          {[
+            ["slots", "Слоты"],
+            ["couriers", "Курьеры"],
+            ["assignments", "Назначения"],
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={activeTab === id ? "slot-tab slot-tab-active" : "slot-tab"}
+              onClick={() => setActiveTab(id as PlannerTab)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
         <div style={{ flex: 1 }} />
         <span style={{ color: "#6b7280", fontSize: 13 }}>admin: {adminName}</span>
@@ -675,6 +1009,8 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
         </button>
       </div>
 
+      {activeTab === "slots" ? (
+        <>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button onClick={() => setWeekOffset((o) => o - 1)} style={btnStyle}>
@@ -774,6 +1110,12 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
       </div>
 
       <div style={{ marginTop: 10, fontSize: 11, color: "#9ca3af", textAlign: "right" }}>* нажмите на слот для редактирования · нажмите на пустое место для добавления</div>
+        </>
+      ) : activeTab === "couriers" ? (
+        <CourierManager accessToken={accessToken} locations={locations} />
+      ) : (
+        <AssignmentsManager accessToken={accessToken} />
+      )}
     </div>
   );
 }

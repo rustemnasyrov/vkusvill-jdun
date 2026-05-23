@@ -29,6 +29,19 @@ export type ShiftTemplateDto = {
 export type CourierDto = {
   id: string;
   external_ref: string | null;
+  full_name: string;
+  phone: string | null;
+  courier_type: "teal" | "blue" | "amber" | "purple";
   status: string;
   location_ids: string[];
+};
+
+export type AssignmentDto = {
+  id: string;
+  courier_id: string;
+  shift_instance_id: string;
+  status: string;
+  starts_at: string;
+  ends_at: string;
+  created_at: string;
 };

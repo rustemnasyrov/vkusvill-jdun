@@ -11,10 +11,13 @@ from sqlalchemy.orm import selectinload
 
 from app.db import get_session
 from app.deps import admin_user
-from app.models import Courier, Location, ShiftInstance, ShiftTemplate
+from app.models import Assignment, Courier, Location, ShiftInstance, ShiftTemplate
 from app.schemas import (
+    AssignmentAdminOut,
     CourierAdminOut,
     CourierCreate,
+    CourierLocationsBody,
+    CourierStatusBody,
     GenerateWeekBody,
     LocationCreate,
     LocationOut,
@@ -72,11 +75,25 @@ async def list_couriers(session: AsyncSession = Depends(get_session)):
         CourierAdminOut(
             id=c.id,
             external_ref=c.external_ref,
+            full_name=c.full_name,
+            phone=c.phone,
+            courier_type=c.courier_type,
             status=c.status,
             location_ids=[loc.id for loc in c.locations],
         )
         for c in rows
     ]
+
+
+@router.get("/assignments", response_model=list[AssignmentAdminOut])
+async def list_assignments(
+    session: AsyncSession = Depends(get_session),
+    courier_id: uuid.UUID | None = None,
+):
+    stmt = select(Assignment).order_by(Assignment.starts_at.desc())
+    if courier_id is not None:
+        stmt = stmt.where(Assignment.courier_id == courier_id)
+    return list((await session.execute(stmt)).scalars().all())
 
 
 def _parse_time(value: str):
@@ -113,11 +130,24 @@ async def create_courier(
     body: CourierCreate,
     session: AsyncSession = Depends(get_session),
 ):
+    phone = body.phone.strip()
+    if (
+        await session.execute(
+            select(Courier.id).where(Courier.phone == phone)
+        )
+    ).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, "Курьер с таким телефоном уже есть")
     if body.location_ids:
         for lid in body.location_ids:
             if not await session.get(Location, lid):
                 raise HTTPException(status.HTTP_404_NOT_FOUND, f"Локация {lid} не найдена")
-    c = Courier(external_ref=body.external_ref, status="active")
+    c = Courier(
+        external_ref=body.external_ref or phone,
+        full_name=body.full_name.strip(),
+        phone=phone,
+        courier_type=body.courier_type,
+        status="active",
+    )
     if body.location_ids:
         locs = (await session.execute(select(Location).where(Location.id.in_(body.location_ids)))).scalars().all()
         c.locations = list(locs)
@@ -130,15 +160,47 @@ async def create_courier(
         entity_type="courier",
         entity_id=str(c.id),
         action="created",
-        payload={"external_ref": body.external_ref},
+        payload={"phone": phone, "courier_type": body.courier_type},
     )
     return {"id": str(c.id)}
+
+
+@router.patch("/couriers/{courier_id}/status", response_model=CourierAdminOut)
+async def set_courier_status(
+    courier_id: uuid.UUID,
+    body: CourierStatusBody,
+    session: AsyncSession = Depends(get_session),
+):
+    c = await session.get(Courier, courier_id, options=[selectinload(Courier.locations)])
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курьер не найден")
+    c.status = body.status
+    session.add(c)
+    await session.flush()
+    await write_audit(
+        session,
+        actor_type="admin",
+        actor_id=None,
+        entity_type="courier",
+        entity_id=str(c.id),
+        action="status_changed",
+        payload={"status": body.status},
+    )
+    return CourierAdminOut(
+        id=c.id,
+        external_ref=c.external_ref,
+        full_name=c.full_name,
+        phone=c.phone,
+        courier_type=c.courier_type,
+        status=c.status,
+        location_ids=[loc.id for loc in c.locations],
+    )
 
 
 @router.put("/couriers/{courier_id}/locations", response_model=dict)
 async def set_courier_locations(
     courier_id: uuid.UUID,
-    body: CourierCreate,
+    body: CourierLocationsBody,
     session: AsyncSession = Depends(get_session),
 ):
     c = await session.get(Courier, courier_id)

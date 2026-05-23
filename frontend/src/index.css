@@ -31,6 +31,147 @@ body {
   margin-bottom: 16px;
 }
 
+.slot-tabs {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  background: #eef2f0;
+  border: 1px solid #dfe7e2;
+  border-radius: 12px;
+}
+
+.slot-tab {
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #4b5563;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 7px 12px;
+}
+
+.slot-tab-active {
+  background: #fff;
+  color: #111827;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 0.08);
+}
+
+.courier-create-grid {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 2fr) auto;
+}
+
+.courier-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.courier-table-wrap {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  overflow-x: auto;
+}
+
+.courier-table {
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 1120px;
+  width: 100%;
+}
+
+.courier-table th,
+.courier-table td {
+  border-bottom: 1px solid #eef0f3;
+  overflow: hidden;
+  padding: 9px 10px;
+  text-align: left;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.courier-table th {
+  background: #f9fafb;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.courier-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.courier-col-location {
+  width: 150px;
+}
+
+.courier-col-phone {
+  font-variant-numeric: tabular-nums;
+  width: 170px;
+}
+
+.courier-col-type {
+  text-align: center;
+  width: 64px;
+}
+
+.courier-col-name {
+  width: 260px;
+}
+
+.courier-col-slots {
+  width: auto;
+}
+
+.courier-col-status {
+  width: 118px;
+}
+
+.courier-col-action {
+  text-align: right;
+  width: 92px;
+}
+
+.courier-type-icon {
+  align-items: center;
+  border: 2px solid;
+  border-radius: 7px;
+  display: inline-flex;
+  font-size: 13px;
+  height: 24px;
+  justify-content: center;
+  line-height: 1;
+  vertical-align: middle;
+  width: 24px;
+}
+
+.courier-status-active,
+.courier-status-blocked {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.courier-status-active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.courier-status-blocked {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .slot-calendar-scroll {
   background: #fff;
   border: 0.5px solid #e5e7eb;
@@ -70,6 +211,25 @@ body {
 
   .slot-stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .slot-tabs {
+    width: 100%;
+  }
+
+  .slot-tab {
+    flex: 1;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .courier-create-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .courier-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .slot-calendar-scroll {

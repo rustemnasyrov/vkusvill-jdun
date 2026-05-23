@@ -31,6 +31,10 @@ class AssignmentOut(BaseModel):
     created_at: datetime
 
 
+class AssignmentAdminOut(AssignmentOut):
+    courier_id: uuid.UUID
+
+
 class BookAssignmentBody(BaseModel):
     shift_instance_id: uuid.UUID
 
@@ -74,7 +78,18 @@ class LocationCreate(BaseModel):
 
 class CourierCreate(BaseModel):
     external_ref: str | None = None
+    full_name: str = Field(min_length=1)
+    phone: str = Field(min_length=1, max_length=32)
+    courier_type: CourierType = "teal"
     location_ids: list[uuid.UUID] = []
+
+
+class CourierLocationsBody(BaseModel):
+    location_ids: list[uuid.UUID] = []
+
+
+class CourierStatusBody(BaseModel):
+    status: Literal["active", "blocked"]
 
 
 class ShiftInstanceClosedBody(BaseModel):
@@ -105,6 +120,9 @@ class ShiftTemplateOut(BaseModel):
 class CourierAdminOut(BaseModel):
     id: uuid.UUID
     external_ref: str | None
+    full_name: str
+    phone: str | None
+    courier_type: CourierType = "teal"
     status: str
     location_ids: list[uuid.UUID]
 
