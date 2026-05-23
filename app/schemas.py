@@ -35,6 +35,11 @@ class AssignmentAdminOut(AssignmentOut):
     courier_id: uuid.UUID
 
 
+class AdminAssignmentCreate(BaseModel):
+    courier_id: uuid.UUID
+    shift_instance_id: uuid.UUID
+
+
 class BookAssignmentBody(BaseModel):
     shift_instance_id: uuid.UUID
 

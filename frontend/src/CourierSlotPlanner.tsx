@@ -3,7 +3,7 @@ import { addDays, localDateInputValue, startOfIsoWeekMonday } from "./dates";
 import type { AssignmentDto, CourierDto, LocationDto, ShiftSlot } from "./types";
 
 const API = "/api";
-const H_START = 7;
+const H_START = 6;
 const H_END = 23;
 const HOURS = H_END - H_START;
 const DAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -681,68 +681,266 @@ function CourierManager({
 
 function AssignmentsManager({
   accessToken,
+  locations,
+  onUnauthorized,
 }: {
   accessToken: string;
+  locations: LocationDto[];
+  onUnauthorized: () => void;
 }) {
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [locationId, setLocationId] = useState("");
+  const [slots, setSlots] = useState<PlannerSlot[]>([]);
   const [assignments, setAssignments] = useState<AssignmentDto[]>([]);
   const [couriers, setCouriers] = useState<CourierDto[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<PlannerSlot | null>(null);
+  const [courierQuery, setCourierQuery] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const weekMonday = useMemo(() => addDays(startOfIsoWeekMonday(new Date()), weekOffset * 7), [weekOffset]);
+  const weekDates = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekMonday, i)), [weekMonday]);
+  const weekKeys = useMemo(() => new Set(weekDates.map(localDateInputValue)), [weekDates]);
+  const weekSlots = slots.filter((s) => weekKeys.has(s.date));
+  const confirmedAssignments = assignments.filter((assignment) => assignment.status === "confirmed");
+
+  useEffect(() => {
+    if (!locationId && locations.length) setLocationId(locations[0].id);
+  }, [locationId, locations]);
+
   const loadData = useCallback(async () => {
+    if (!locationId) return;
     setLoading(true);
     setError(null);
+    setMessage(null);
     try {
-      const [assignmentsResponse, couriersResponse] = await Promise.all([
+      const from = new Date(weekMonday);
+      from.setHours(0, 0, 0, 0);
+      const to = addDays(from, 7);
+      const q = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), location_id: locationId });
+      const [slotsResponse, assignmentsResponse, couriersResponse] = await Promise.all([
+        fetch(`${API}/admin/shift-instances?${q}`, { headers: adminHeaders(accessToken) }),
         fetch(`${API}/admin/assignments`, { headers: adminHeaders(accessToken) }),
         fetch(`${API}/admin/couriers`, { headers: adminHeaders(accessToken) }),
       ]);
+      if (slotsResponse.status === 401 || assignmentsResponse.status === 401 || couriersResponse.status === 401) {
+        onUnauthorized();
+        throw new Error("Сессия недействительна или истекла. Войдите снова.");
+      }
+      if (!slotsResponse.ok) throw new Error(await readApiError(slotsResponse));
       if (!assignmentsResponse.ok) throw new Error(await readApiError(assignmentsResponse));
       if (!couriersResponse.ok) throw new Error(await readApiError(couriersResponse));
+      setSlots(((await slotsResponse.json()) as ShiftSlot[]).map(toPlannerSlot));
       setAssignments(await assignmentsResponse.json());
       setCouriers(await couriersResponse.json());
     } catch (e) {
+      setSlots([]);
       setError(e instanceof Error ? e.message : "Ошибка загрузки назначений");
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, locationId, onUnauthorized, weekMonday]);
 
   useEffect(() => {
-    void loadData();
+    if (accessToken && locationId) void loadData();
   }, [loadData]);
 
+  const assignmentsBySlot = useMemo(() => {
+    const map = new Map<string, AssignmentDto[]>();
+    for (const assignment of confirmedAssignments) {
+      const list = map.get(assignment.shift_instance_id) ?? [];
+      list.push(assignment);
+      map.set(assignment.shift_instance_id, list);
+    }
+    return map;
+  }, [confirmedAssignments]);
+
+  const selectedAssignments = selectedSlot ? assignmentsBySlot.get(selectedSlot.id) ?? [] : [];
+  const selectedAssignedCourierIds = new Set(selectedAssignments.map((assignment) => assignment.courier_id));
+
+  const availableCouriers = selectedSlot
+    ? couriers.filter((courier) => {
+        if (courier.status !== "active") return false;
+        if (courier.courier_type !== selectedSlot.type) return false;
+        if (!courier.location_ids.includes(selectedSlot.location_id)) return false;
+        if (selectedAssignedCourierIds.has(courier.id)) return false;
+        const needle = courierQuery.trim().toLowerCase();
+        if (needle && !`${courier.full_name} ${courier.phone ?? ""}`.toLowerCase().includes(needle)) return false;
+        const slotStart = new Date(`${selectedSlot.date}T${selectedSlot.start}:00`).getTime();
+        const slotEnd = new Date(`${selectedSlot.date}T${selectedSlot.end}:00`).getTime();
+        return !confirmedAssignments.some((assignment) => {
+          if (assignment.courier_id !== courier.id) return false;
+          const assignmentStart = new Date(assignment.starts_at).getTime();
+          const assignmentEnd = new Date(assignment.ends_at).getTime();
+          return assignmentStart < slotEnd && assignmentEnd > slotStart;
+        });
+      })
+    : [];
+
+  async function assignCourier(courierId: string) {
+    if (!selectedSlot) return;
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`${API}/admin/assignments`, {
+        method: "POST",
+        headers: adminHeaders(accessToken),
+        body: JSON.stringify({ courier_id: courierId, shift_instance_id: selectedSlot.id }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      setMessage("Курьер назначен.");
+      await loadData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось назначить курьера");
+    }
+  }
+
+  async function cancelAssignment(assignmentId: string) {
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`${API}/admin/assignments/${assignmentId}`, {
+        method: "DELETE",
+        headers: adminHeaders(accessToken),
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      setMessage("Назначение снято.");
+      await loadData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось снять назначение");
+    }
+  }
+
+  const DAY_LABEL_W = 72;
+
   return (
-    <section style={{ display: "grid", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Назначения</h2>
-        <button type="button" onClick={() => void loadData()} style={{ ...smallButtonStyle, width: "auto", padding: "7px 12px", fontSize: 13 }}>
-          Обновить
+    <section style={{ display: "grid", gap: 16 }}>
+      {selectedSlot ? (
+        <div style={{ position: "fixed", inset: 0, background: "rgb(15 23 42 / 0.35)", display: "grid", placeItems: "center", zIndex: 50, padding: 16 }} onClick={() => setSelectedSlot(null)}>
+          <div style={{ width: "min(720px, 100%)", maxHeight: "88vh", overflow: "auto", background: "#fff", borderRadius: 18, padding: 20, boxShadow: "0 24px 80px rgb(15 23 42 / 0.25)" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start", justifyContent: "space-between" }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 22 }}>Назначение курьеров</h2>
+                <p style={{ margin: "6px 0 0", color: "#6b7280" }}>
+                  {formatDateTime(new Date(`${selectedSlot.date}T${selectedSlot.start}:00`).toISOString())} - {selectedSlot.end} · {TYPE_LABEL[selectedSlot.type]} · {selectedAssignments.length}/{selectedSlot.count}
+                </p>
+              </div>
+              <button type="button" onClick={() => setSelectedSlot(null)} style={{ ...smallButtonStyle, width: "auto", padding: "7px 12px", fontSize: 13 }}>Закрыть</button>
+            </div>
+
+            <div style={{ display: "grid", gap: 14, marginTop: 18 }}>
+              <section>
+                <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>Уже назначены</h3>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {selectedAssignments.map((assignment) => {
+                    const courier = couriers.find((c) => c.id === assignment.courier_id);
+                    return (
+                      <div key={assignment.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", border: "1px solid #e5e7eb", borderRadius: 10 }}>
+                        <strong>{courier?.full_name || courier?.phone || assignment.courier_id.slice(0, 8)}</strong>
+                        <span style={{ color: "#6b7280", fontSize: 13 }}>{courier?.phone}</span>
+                        <div style={{ flex: 1 }} />
+                        <button type="button" onClick={() => void cancelAssignment(assignment.id)} style={{ ...smallButtonStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>Снять</button>
+                      </div>
+                    );
+                  })}
+                  {!selectedAssignments.length ? <p style={{ color: "#6b7280", margin: 0 }}>Пока никого нет.</p> : null}
+                </div>
+              </section>
+
+              <section>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+                  <h3 style={{ margin: 0, fontSize: 15 }}>Можно назначить</h3>
+                  <input value={courierQuery} onChange={(e) => setCourierQuery(e.target.value)} placeholder="Поиск курьера" style={{ marginLeft: "auto", minWidth: 220, padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 10 }} />
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {availableCouriers.map((courier) => (
+                    <div key={courier.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", border: "1px solid #e5e7eb", borderRadius: 10 }}>
+                      <span
+                        className="courier-type-icon"
+                        title={TYPE_LABEL[courier.courier_type]}
+                        style={{
+                          background: TYPE_STYLES[courier.courier_type].bg,
+                          borderColor: TYPE_STYLES[courier.courier_type].border,
+                          color: TYPE_STYLES[courier.courier_type].text,
+                        }}
+                      >
+                        {TYPE_ICON[courier.courier_type]}
+                      </span>
+                      <strong>{courier.full_name || courier.phone}</strong>
+                      <span style={{ color: "#6b7280", fontSize: 13 }}>{courier.phone}</span>
+                      <div style={{ flex: 1 }} />
+                      <button
+                        type="button"
+                        onClick={() => void assignCourier(courier.id)}
+                        disabled={selectedAssignments.length >= selectedSlot.count}
+                        style={{ padding: "6px 11px", border: 0, borderRadius: 8, background: selectedAssignments.length >= selectedSlot.count ? "#d1d5db" : "#1D9E75", color: "#fff", fontWeight: 700 }}
+                      >
+                        Назначить
+                      </button>
+                    </div>
+                  ))}
+                  {!availableCouriers.length ? <p style={{ color: "#6b7280", margin: 0 }}>Подходящих курьеров нет.</p> : null}
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => setWeekOffset((o) => o - 1)} style={btnStyle}>{"<"}</button>
+          <span style={{ fontSize: 14, fontWeight: 500, minWidth: 148, textAlign: "center" }}>
+            {fmtDate(weekDates[0])} - {fmtDate(weekDates[6])}
+          </span>
+          <button onClick={() => setWeekOffset((o) => o + 1)} style={btnStyle}>{">"}</button>
+        </div>
+        <button onClick={() => setWeekOffset(0)} style={{ ...btnStyle, width: "auto", padding: "5px 14px", fontSize: 13 }}>Сегодня</button>
+        <select value={locationId} onChange={(e) => setLocationId(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", minWidth: 180 }}>
+          {!locations.length ? <option value="">Нет локаций</option> : null}
+          {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+        <button type="button" onClick={() => void loadData()} disabled={loading || !locationId} style={{ ...btnStyle, width: "auto", padding: "5px 14px", fontSize: 13 }}>
+          {loading ? "Загрузка..." : "Обновить"}
         </button>
       </div>
-      {loading ? <p style={{ color: "#6b7280" }}>Загрузка...</p> : null}
-      {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
-      <div style={{ display: "grid", gap: 8 }}>
-        {assignments.map((assignment) => {
-          const courier = couriers.find((c) => c.id === assignment.courier_id);
-          return (
-            <article key={assignment.id} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 14 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <strong>{formatDateTime(assignment.starts_at)} - {formatDateTime(assignment.ends_at)}</strong>
-                <span style={{ color: "#6b7280" }}>·</span>
-                <span>{courier?.full_name || courier?.phone || assignment.courier_id.slice(0, 8)}</span>
-                <span style={{ padding: "3px 8px", borderRadius: 999, background: "#eef2ff", color: "#3730a3", fontSize: 12 }}>
-                  {assignment.status}
+
+      {message ? <p style={{ color: "#15803d", margin: 0 }}>{message}</p> : null}
+      {error ? <p style={{ color: "#b91c1c", margin: 0 }}>{error}</p> : null}
+
+      <div className="slot-calendar-scroll">
+        <div className="slot-calendar-grid">
+          <div style={{ display: "flex", borderBottom: "0.5px solid #e5e7eb", background: "#f9fafb" }}>
+            <div className="slot-day-label slot-day-label-header" style={{ width: DAY_LABEL_W, flexShrink: 0 }} />
+            <div style={{ flex: 1, position: "relative", height: 26 }}>
+              {Array.from({ length: HOURS + 1 }, (_, i) => (
+                <span key={i} style={{ position: "absolute", left: `${(i / HOURS) * 100}%`, transform: "translateX(-50%)", fontSize: 10, color: "#9ca3af", top: 6, whiteSpace: "nowrap" }}>
+                  {pad2(H_START + i)}:00
                 </span>
+              ))}
+            </div>
+          </div>
+
+          {weekDates.map((d, i) => {
+            const dateKey = localDateInputValue(d);
+            const today = isToday(d);
+            return (
+              <div key={i} style={{ display: "flex", borderBottom: i < 6 ? "0.5px solid #f0f0f0" : "none" }}>
+                <div className="slot-day-label" style={{ width: DAY_LABEL_W, flexShrink: 0, padding: "10px 10px", borderRight: "0.5px solid #e5e7eb", background: "#fafafa" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: today ? "#1D9E75" : "#374151" }}>{DAYS_RU[i]}</div>
+                  <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{fmtDate(d)}</div>
+                </div>
+                <div className="slot-timeline-cell">
+                  <DayRow date={d} daySlots={weekSlots.filter((s) => s.date === dateKey)} isToday={today} onSlotClick={setSelectedSlot} readOnly />
+                </div>
               </div>
-              <div style={{ color: "#6b7280", fontSize: 12, marginTop: 5 }}>
-                Курьер: {assignment.courier_id} · Слот: {assignment.shift_instance_id}
-              </div>
-            </article>
-          );
-        })}
-        {!loading && assignments.length === 0 ? <p style={{ color: "#6b7280" }}>Назначений пока нет.</p> : null}
+            );
+          })}
+        </div>
       </div>
+
+      <div style={{ marginTop: -6, fontSize: 11, color: "#9ca3af", textAlign: "right" }}>* нажмите на слот, чтобы назначить или снять курьера</div>
     </section>
   );
 }
@@ -773,14 +971,37 @@ function DayRow({
   isToday: today,
   onSlotClick,
   onAreaClick,
+  readOnly = false,
 }: {
   date: Date;
   daySlots: PlannerSlot[];
   isToday: boolean;
   onSlotClick: (slot: PlannerSlot) => void;
-  onAreaClick: (dateKey: string, start: string, end: string) => void;
+  onAreaClick?: (dateKey: string, start: string, end: string) => void;
+  readOnly?: boolean;
 }) {
+  const slotHeight = 34;
+  const laneGap = 4;
+  const verticalPad = 5;
+  const lanesEnd: number[] = [];
+  const laidOutSlots = [...daySlots]
+    .sort((a, b) => timeToMin(a.start) - timeToMin(b.start) || timeToMin(a.end) - timeToMin(b.end))
+    .map((slot) => {
+      const startMin = timeToMin(slot.start);
+      const endMin = timeToMin(slot.end);
+      let lane = lanesEnd.findIndex((laneEnd) => laneEnd <= startMin);
+      if (lane === -1) {
+        lane = lanesEnd.length;
+        lanesEnd.push(endMin);
+      } else {
+        lanesEnd[lane] = endMin;
+      }
+      return { slot, lane, startMin, endMin };
+    });
+  const rowHeight = Math.max(44, verticalPad * 2 + lanesEnd.length * slotHeight + Math.max(0, lanesEnd.length - 1) * laneGap);
+
   function handleClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (readOnly || !onAreaClick) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const frac = (e.clientX - rect.left) / rect.width;
     const totalMin = H_START * 60 + Math.round((frac * HOURS * 60) / 15) * 15;
@@ -789,16 +1010,16 @@ function DayRow({
   }
 
   return (
-    <div style={{ position: "relative", height: 44, cursor: "crosshair", borderBottom: "0.5px solid #f0f0f0" }} onClick={handleClick}>
+    <div style={{ position: "relative", height: rowHeight, cursor: readOnly ? "default" : "crosshair", borderBottom: "0.5px solid #f0f0f0" }} onClick={handleClick}>
       {Array.from({ length: HOURS + 1 }, (_, i) => (
         <div key={i} style={{ position: "absolute", top: 0, bottom: 0, left: `${(i / HOURS) * 100}%`, width: "0.5px", background: i % 2 === 0 ? "#e5e7eb" : "#f3f4f6", pointerEvents: "none" }} />
       ))}
 
       {today && <NowMarker />}
 
-      {daySlots.map((s) => {
-        const left = fracToX(timeToMin(s.start));
-        const right = fracToX(timeToMin(s.end));
+      {laidOutSlots.map(({ slot: s, lane, startMin, endMin }) => {
+        const left = fracToX(startMin);
+        const right = fracToX(endMin);
         const width = Math.max(right - left, 1.5);
         const st = TYPE_STYLES[s.type] || TYPE_STYLES.teal;
         return (
@@ -813,8 +1034,8 @@ function DayRow({
             onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
             style={{
               position: "absolute",
-              top: 5,
-              height: 34,
+              top: verticalPad + lane * (slotHeight + laneGap),
+              height: slotHeight,
               left: `${left}%`,
               width: `${width}%`,
               background: s.closed_by_admin ? "#e5e7eb" : st.bg,
@@ -1114,7 +1335,7 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
       ) : activeTab === "couriers" ? (
         <CourierManager accessToken={accessToken} locations={locations} />
       ) : (
-        <AssignmentsManager accessToken={accessToken} />
+        <AssignmentsManager accessToken={accessToken} locations={locations} onUnauthorized={onUnauthorized} />
       )}
     </div>
   );

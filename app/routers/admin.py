@@ -11,8 +11,10 @@ from sqlalchemy.orm import selectinload
 
 from app.db import get_session
 from app.deps import admin_user
+from app.enums import AssignmentStatus
 from app.models import Assignment, Courier, Location, ShiftInstance, ShiftTemplate
 from app.schemas import (
+    AdminAssignmentCreate,
     AssignmentAdminOut,
     CourierAdminOut,
     CourierCreate,
@@ -29,6 +31,7 @@ from app.schemas import (
     ShiftTemplateOut,
 )
 from app.services.audit import write_audit
+from app.services.bookings import create_assignment
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(admin_user)])
 
@@ -94,6 +97,63 @@ async def list_assignments(
     if courier_id is not None:
         stmt = stmt.where(Assignment.courier_id == courier_id)
     return list((await session.execute(stmt)).scalars().all())
+
+
+@router.post("/assignments", response_model=AssignmentAdminOut)
+async def create_admin_assignment(
+    body: AdminAssignmentCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    assignment = await create_assignment(
+        session,
+        courier_id=body.courier_id,
+        shift_instance_id=body.shift_instance_id,
+        idempotency_key=None,
+    )
+    await write_audit(
+        session,
+        actor_type="admin",
+        actor_id=None,
+        entity_type="assignment",
+        entity_id=str(assignment.id),
+        action="created_by_admin",
+        payload={"courier_id": str(body.courier_id), "shift_instance_id": str(body.shift_instance_id)},
+    )
+    return assignment
+
+
+@router.delete("/assignments/{assignment_id}", response_model=AssignmentAdminOut)
+async def cancel_admin_assignment(
+    assignment_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    q = await session.execute(select(Assignment).where(Assignment.id == assignment_id).with_for_update())
+    assignment = q.scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Назначение не найдено")
+    if assignment.status != AssignmentStatus.confirmed.value:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Назначение уже снято")
+
+    si_row = await session.execute(
+        select(ShiftInstance).where(ShiftInstance.id == assignment.shift_instance_id).with_for_update()
+    )
+    si = si_row.scalar_one_or_none()
+    if not si:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Слот не найден")
+
+    assignment.status = AssignmentStatus.cancelled_by_admin.value
+    assignment.cancelled_at = datetime.now(UTC)
+    si.booked_count = max(0, si.booked_count - 1)
+    await write_audit(
+        session,
+        actor_type="admin",
+        actor_id=None,
+        entity_type="assignment",
+        entity_id=str(assignment.id),
+        action="cancelled_by_admin",
+        payload={"shift_instance_id": str(assignment.shift_instance_id)},
+    )
+    return assignment
 
 
 def _parse_time(value: str):
