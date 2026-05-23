@@ -1,7 +1,10 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, time
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+CourierType = Literal["teal", "blue", "amber", "purple"]
 
 
 class ShiftInstanceOut(BaseModel):
@@ -12,6 +15,7 @@ class ShiftInstanceOut(BaseModel):
     starts_at: datetime
     ends_at: datetime
     capacity: int
+    courier_type: CourierType = "teal"
     booked_count: int
     closed_by_admin: bool
 
@@ -37,6 +41,7 @@ class ShiftTemplateCreate(BaseModel):
     start_time: str  # "HH:MM:SS" or "HH:MM"
     duration_minutes: int = Field(gt=0)
     capacity: int = Field(gt=0)
+    courier_type: CourierType = "teal"
 
 
 class ShiftInstanceCreate(BaseModel):
@@ -44,8 +49,17 @@ class ShiftInstanceCreate(BaseModel):
     starts_at: datetime
     ends_at: datetime
     capacity: int = Field(gt=0)
+    courier_type: CourierType = "teal"
     booking_opens_at: datetime | None = None
     booking_closes_at: datetime | None = None
+
+
+class ShiftInstanceUpdate(BaseModel):
+    location_id: uuid.UUID
+    starts_at: datetime
+    ends_at: datetime
+    capacity: int = Field(gt=0)
+    courier_type: CourierType = "teal"
 
 
 class GenerateWeekBody(BaseModel):
@@ -65,3 +79,42 @@ class CourierCreate(BaseModel):
 
 class ShiftInstanceClosedBody(BaseModel):
     closed: bool
+
+
+class LocationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    timezone: str
+
+
+class ShiftTemplateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    location_id: uuid.UUID
+    day_of_week: int
+    start_time: time
+    duration_minutes: int
+    capacity: int
+    courier_type: CourierType = "teal"
+    is_active: bool
+
+
+class CourierAdminOut(BaseModel):
+    id: uuid.UUID
+    external_ref: str | None
+    status: str
+    location_ids: list[uuid.UUID]
+
+
+class AdminLoginBody(BaseModel):
+    username: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
+class AdminLoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int

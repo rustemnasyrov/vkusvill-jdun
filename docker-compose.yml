@@ -23,7 +23,11 @@ services:
       - "9000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://courier:courier@postgres:5432/courier_shifts
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-change-me}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-dev-password-change-me}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
+      # Опционально: прежний статический Bearer (вместо входа по JWT), см. README
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       CORS_ORIGINS: http://localhost:9001,http://127.0.0.1:9001
     volumes:
       - ./app:/code/app

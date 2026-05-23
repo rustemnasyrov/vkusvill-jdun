@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.routers import admin, courier
+from app.routers import admin, auth, courier
 from app.services.bookings import BookingError
 
 app = FastAPI(title="Самозапись курьеров на смены", version="0.1.0")
@@ -18,6 +18,7 @@ if _origins:
         allow_headers=["*"],
     )
 
+app.include_router(auth.router)
 app.include_router(courier.router)
 app.include_router(admin.router)
 

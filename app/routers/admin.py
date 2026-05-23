@@ -4,24 +4,79 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db import get_session
-from app.deps import admin_bearer
+from app.deps import admin_user
 from app.models import Courier, Location, ShiftInstance, ShiftTemplate
 from app.schemas import (
+    CourierAdminOut,
     CourierCreate,
     GenerateWeekBody,
     LocationCreate,
+    LocationOut,
     ShiftInstanceClosedBody,
     ShiftInstanceCreate,
+    ShiftInstanceOut,
+    ShiftInstanceUpdate,
     ShiftTemplateCreate,
+    ShiftTemplateOut,
 )
 from app.services.audit import write_audit
 
-router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(admin_bearer)])
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(admin_user)])
+
+
+@router.get("/locations", response_model=list[LocationOut])
+async def list_locations(session: AsyncSession = Depends(get_session)):
+    stmt = select(Location).order_by(Location.name)
+    rows = (await session.execute(stmt)).scalars().all()
+    return rows
+
+
+@router.get("/shift-templates", response_model=list[ShiftTemplateOut])
+async def list_shift_templates(
+    session: AsyncSession = Depends(get_session),
+    location_id: uuid.UUID | None = None,
+):
+    stmt = select(ShiftTemplate).order_by(ShiftTemplate.day_of_week, ShiftTemplate.start_time)
+    if location_id is not None:
+        stmt = stmt.where(ShiftTemplate.location_id == location_id)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+@router.get("/shift-instances", response_model=list[ShiftInstanceOut])
+async def list_shift_instances(
+    session: AsyncSession = Depends(get_session),
+    from_: datetime = Query(alias="from"),
+    to: datetime = Query(),
+    location_id: uuid.UUID | None = None,
+):
+    stmt = select(ShiftInstance).where(
+        ShiftInstance.starts_at >= from_,
+        ShiftInstance.starts_at < to,
+    ).order_by(ShiftInstance.starts_at)
+    if location_id is not None:
+        stmt = stmt.where(ShiftInstance.location_id == location_id)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+@router.get("/couriers", response_model=list[CourierAdminOut])
+async def list_couriers(session: AsyncSession = Depends(get_session)):
+    stmt = select(Courier).options(selectinload(Courier.locations)).order_by(Courier.id)
+    rows = (await session.execute(stmt)).scalars().all()
+    return [
+        CourierAdminOut(
+            id=c.id,
+            external_ref=c.external_ref,
+            status=c.status,
+            location_ids=[loc.id for loc in c.locations],
+        )
+        for c in rows
+    ]
 
 
 def _parse_time(value: str):
@@ -113,6 +168,7 @@ async def create_shift_template(
         start_time=st,
         duration_minutes=body.duration_minutes,
         capacity=body.capacity,
+        courier_type=body.courier_type,
         is_active=True,
     )
     session.add(t)
@@ -144,6 +200,7 @@ async def create_shift_instance(
         starts_at=body.starts_at,
         ends_at=body.ends_at,
         capacity=body.capacity,
+        courier_type=body.courier_type,
         booked_count=0,
         closed_by_admin=False,
         booking_opens_at=body.booking_opens_at,
@@ -161,6 +218,66 @@ async def create_shift_instance(
         payload={"location_id": str(body.location_id)},
     )
     return {"id": str(si.id)}
+
+
+@router.put("/shift-instances/{instance_id}", response_model=ShiftInstanceOut)
+async def update_shift_instance(
+    instance_id: uuid.UUID,
+    body: ShiftInstanceUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    si = await session.get(ShiftInstance, instance_id)
+    if not si:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Слот не найден")
+    if not await session.get(Location, body.location_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Локация не найдена")
+    if body.ends_at <= body.starts_at:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ends_at должен быть позже starts_at")
+    if body.capacity < si.booked_count:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Нельзя сделать мест меньше уже записанных курьеров")
+
+    si.template_id = None
+    si.location_id = body.location_id
+    si.starts_at = body.starts_at
+    si.ends_at = body.ends_at
+    si.capacity = body.capacity
+    si.courier_type = body.courier_type
+    session.add(si)
+    await session.flush()
+    await write_audit(
+        session,
+        actor_type="admin",
+        actor_id=None,
+        entity_type="shift_instance",
+        entity_id=str(si.id),
+        action="updated",
+        payload={"location_id": str(body.location_id), "courier_type": body.courier_type},
+    )
+    return si
+
+
+@router.delete("/shift-instances/{instance_id}", response_model=dict)
+async def delete_shift_instance(
+    instance_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    si = await session.get(ShiftInstance, instance_id)
+    if not si:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Слот не найден")
+    if si.booked_count > 0:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Нельзя удалить слот с записанными курьерами")
+
+    await session.delete(si)
+    await write_audit(
+        session,
+        actor_type="admin",
+        actor_id=None,
+        entity_type="shift_instance",
+        entity_id=str(instance_id),
+        action="deleted",
+        payload=None,
+    )
+    return {"ok": True}
 
 
 @router.post("/shifts/generate-week", response_model=dict)
@@ -207,6 +324,7 @@ async def generate_week(
             starts_at=starts_at,
             ends_at=ends_at,
             capacity=t.capacity,
+            courier_type=t.courier_type,
             booked_count=0,
             closed_by_admin=False,
             booking_opens_at=None,

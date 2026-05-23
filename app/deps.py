@@ -1,8 +1,11 @@
+import secrets
 import uuid
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
+from jwt.exceptions import InvalidTokenError
 
+from app.admin_security import decode_admin_token
 from app.config import settings
 
 
@@ -15,9 +18,27 @@ async def courier_id_header(x_courier_id: Annotated[str | None, Header(alias="X-
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Некорректный X-Courier-Id") from e
 
 
-async def admin_bearer(authorization: Annotated[str | None, Header()] = None) -> None:
+async def admin_user(authorization: Annotated[str | None, Header()] = None) -> dict:
+    """JWT после входа или (опционально) статический token из ADMIN_TOKEN."""
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Нужен Bearer-токен администратора")
-    token = authorization.removeprefix("Bearer ").strip()
-    if token != settings.admin_token:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Нужна авторизация администратора")
+    raw = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = decode_admin_token(raw)
+        if payload.get("role") != "admin":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
+        return payload
+    except InvalidTokenError:
+        pass
+    legacy = settings.admin_legacy_token
+    if legacy is not None:
+        try:
+            legacy_ok = secrets.compare_digest(raw, legacy)
+        except ValueError:
+            legacy_ok = False
+        if legacy_ok:
+            return {"sub": "legacy-admin", "role": "admin"}
+    raise HTTPException(
+        status.HTTP_401_UNAUTHORIZED,
+        "Недействительный или просроченный токен. Войдите снова через форму входа.",
+    )

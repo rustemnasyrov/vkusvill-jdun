@@ -75,6 +75,7 @@ class ShiftTemplate(Base):
     start_time: Mapped[object] = mapped_column(Time, nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+    courier_type: Mapped[str] = mapped_column(String(16), nullable=False, default="teal")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
@@ -91,6 +92,7 @@ class ShiftInstance(Base):
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+    courier_type: Mapped[str] = mapped_column(String(16), nullable=False, default="teal")
     booked_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     closed_by_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     booking_opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
