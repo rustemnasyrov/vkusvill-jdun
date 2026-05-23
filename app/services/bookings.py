@@ -98,6 +98,9 @@ async def create_assignment(
     if si.location_id not in loc_ids:
         raise BookingError("wrong_location", "Слот недоступен для вашей зоны", 403)
 
+    if si.courier_type != courier.courier_type:
+        raise BookingError("wrong_courier_type", "Слот недоступен для вашего типа доставки", 403)
+
     if si.closed_by_admin:
         raise BookingError("shift_closed", "Слот закрыт администратором", 409)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -34,16 +34,30 @@ async def list_available_shifts(
 
     now = datetime.now(UTC)
 
+    assigned_shift_ids = (
+        select(Assignment.shift_instance_id)
+        .where(
+            Assignment.courier_id == courier_id,
+            Assignment.status == AssignmentStatus.confirmed.value,
+            Assignment.starts_at >= from_dt,
+            Assignment.starts_at < to_dt,
+        )
+    )
+    available = and_(
+        ShiftInstance.closed_by_admin.is_(False),
+        ShiftInstance.booked_count < ShiftInstance.capacity,
+        or_(ShiftInstance.booking_opens_at.is_(None), ShiftInstance.booking_opens_at <= now),
+        or_(ShiftInstance.booking_closes_at.is_(None), ShiftInstance.booking_closes_at >= now),
+    )
+
     stmt = (
         select(ShiftInstance)
         .where(
             ShiftInstance.starts_at >= from_dt,
             ShiftInstance.starts_at < to_dt,
-            ShiftInstance.closed_by_admin.is_(False),
-            ShiftInstance.booked_count < ShiftInstance.capacity,
             ShiftInstance.location_id.in_(loc_ids),
-            or_(ShiftInstance.booking_opens_at.is_(None), ShiftInstance.booking_opens_at <= now),
-            or_(ShiftInstance.booking_closes_at.is_(None), ShiftInstance.booking_closes_at >= now),
+            ShiftInstance.courier_type == courier.courier_type,
+            or_(available, ShiftInstance.id.in_(assigned_shift_ids)),
         )
         .order_by(ShiftInstance.starts_at)
     )

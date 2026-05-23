@@ -3,15 +3,43 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query
+from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db import get_session
 from app.deps import courier_id_header
-from app.schemas import AssignmentOut, BookAssignmentBody, ShiftInstanceOut
+from app.models import Courier
+from app.schemas import AssignmentOut, BookAssignmentBody, CourierAdminOut, CourierLoginBody, ShiftInstanceOut
 from app.services.bookings import BookingError, cancel_assignment, create_assignment
 from app.services.shifts import list_available_shifts, list_my_assignments
 
 router = APIRouter(prefix="/couriers/me", tags=["courier"])
+
+
+@router.post("/login", response_model=CourierAdminOut)
+async def courier_login(
+    body: CourierLoginBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    phone = body.phone.strip()
+    courier = (
+        await session.execute(
+            select(Courier).options(selectinload(Courier.locations)).where(Courier.phone == phone)
+        )
+    ).scalar_one_or_none()
+    if not courier or courier.status != "active":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курьер с таким телефоном не найден или заблокирован")
+    return CourierAdminOut(
+        id=courier.id,
+        external_ref=courier.external_ref,
+        full_name=courier.full_name,
+        phone=courier.phone,
+        courier_type=courier.courier_type,
+        status=courier.status,
+        location_ids=[loc.id for loc in courier.locations],
+    )
 
 
 @router.get("/shifts/available", response_model=list[ShiftInstanceOut])

@@ -270,6 +270,87 @@ function Modal({
   );
 }
 
+function CopyWeekModal({
+  weekMonday,
+  locations,
+  selectedLocationId,
+  onCopy,
+  onClose,
+}: {
+  weekMonday: Date;
+  locations: LocationDto[];
+  selectedLocationId: string;
+  onCopy: (body: { source_week_start: string; target_week_start: string; location_id: string | null; mode: "skip_existing" | "replace_empty" | "append" }) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [sourceDate, setSourceDate] = useState(localDateInputValue(weekMonday));
+  const [targetDate, setTargetDate] = useState(localDateInputValue(addDays(weekMonday, 7)));
+  const [locationScope, setLocationScope] = useState<"current" | "all">(selectedLocationId ? "current" : "all");
+  const [mode, setMode] = useState<"skip_existing" | "replace_empty" | "append">("skip_existing");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      await onCopy({
+        source_week_start: new Date(`${sourceDate}T00:00:00`).toISOString(),
+        target_week_start: new Date(`${targetDate}T00:00:00`).toISOString(),
+        location_id: locationScope === "current" ? selectedLocationId : null,
+        mode,
+      });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось скопировать неделю");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputStyle = { padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 9, font: "inherit" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgb(15 23 42 / 0.35)", display: "grid", placeItems: "center", zIndex: 60, padding: 16 }} onClick={onClose}>
+      <div style={{ width: "min(520px, 100%)", background: "#fff", borderRadius: 18, padding: 20, boxShadow: "0 24px 80px rgb(15 23 42 / 0.25)" }} onClick={(e) => e.stopPropagation()}>
+        <h2 style={{ margin: "0 0 14px", fontSize: 22 }}>Копировать неделю</h2>
+        <div style={{ display: "grid", gap: 12 }}>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
+            Откуда
+            <input type="date" value={sourceDate} onChange={(e) => setSourceDate(e.target.value)} style={inputStyle} />
+          </label>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
+            Куда
+            <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} style={inputStyle} />
+          </label>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
+            Локации
+            <select value={locationScope} onChange={(e) => setLocationScope(e.target.value as "current" | "all")} style={inputStyle}>
+              <option value="current">Текущая: {locations.find((location) => location.id === selectedLocationId)?.name ?? "не выбрана"}</option>
+              <option value="all">Все локации</option>
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
+            Конфликты
+            <select value={mode} onChange={(e) => setMode(e.target.value as "skip_existing" | "replace_empty" | "append")} style={inputStyle}>
+              <option value="skip_existing">Пропустить существующие</option>
+              <option value="replace_empty">Заменить пустые слоты недели</option>
+              <option value="append">Добавить рядом</option>
+            </select>
+          </label>
+        </div>
+        {error ? <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p> : null}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+          <button type="button" onClick={onClose} style={{ ...smallButtonStyle, width: "auto", padding: "8px 14px", fontSize: 13 }}>Отмена</button>
+          <button type="button" onClick={() => void submit()} disabled={busy} style={{ padding: "8px 16px", border: "none", borderRadius: 10, background: busy ? "#9ca3af" : "#1D9E75", color: "#fff", fontWeight: 700 }}>
+            {busy ? "Копируем..." : "Копировать"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LocationsModal({
   locations,
   selectedLocationId,
@@ -1072,6 +1153,7 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
   const [slots, setSlots] = useState<PlannerSlot[]>([]);
   const [modal, setModal] = useState<{ slot: ModalSlot } | null>(null);
   const [locationsOpen, setLocationsOpen] = useState(false);
+  const [copyWeekOpen, setCopyWeekOpen] = useState(false);
   const [locationId, setLocationId] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -1176,6 +1258,27 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
     }
   }
 
+  async function handleCopyWeek(body: { source_week_start: string; target_week_start: string; location_id: string | null; mode: "skip_existing" | "replace_empty" | "append" }) {
+    try {
+      const r = await fetch(`${API}/admin/shift-instances/copy-week`, {
+        method: "POST",
+        headers: adminHeaders(accessToken),
+        body: JSON.stringify(body),
+      });
+      if (r.status === 401) {
+        onUnauthorized();
+        throw new Error("Сессия недействительна или истекла. Войдите снова.");
+      }
+      if (!r.ok) throw new Error(await readApiError(r));
+      const result = (await r.json()) as { created: number; skipped_existing: number; removed_empty: number; kept_booked: number };
+      setMessage(`Неделя скопирована: создано ${result.created}, пропущено ${result.skipped_existing}, удалено пустых ${result.removed_empty}, сохранено занятых ${result.kept_booked}.`);
+      await loadSlots();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось скопировать неделю");
+      throw e;
+    }
+  }
+
   const peak = (() => {
     let p = 0;
     for (let t = H_START * 60; t < H_END * 60; t += 15) {
@@ -1194,6 +1297,7 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
   return (
     <div className="slot-planner">
       {modal && <Modal slot={modal.slot} weekDates={weekDates} onSave={(s) => void handleSave(s)} onDelete={(id) => void handleDelete(id)} onClose={() => setModal(null)} />}
+      {copyWeekOpen && <CopyWeekModal weekMonday={weekMonday} locations={locations} selectedLocationId={locationId} onCopy={handleCopyWeek} onClose={() => setCopyWeekOpen(false)} />}
       {locationsOpen && (
         <LocationsModal
           locations={locations}
@@ -1260,6 +1364,9 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
         </button>
         <button onClick={() => void loadSlots()} disabled={loading || !locationId} style={{ ...btnStyle, width: "auto", padding: "5px 14px", fontSize: 13 }}>
           {loading ? "Загрузка..." : "Обновить"}
+        </button>
+        <button onClick={() => setCopyWeekOpen(true)} style={{ ...btnStyle, width: "auto", padding: "5px 14px", fontSize: 13 }}>
+          Копировать неделю
         </button>
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>

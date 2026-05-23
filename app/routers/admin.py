@@ -16,6 +16,7 @@ from app.models import Assignment, Courier, Location, ShiftInstance, ShiftTempla
 from app.schemas import (
     AdminAssignmentCreate,
     AssignmentAdminOut,
+    CopyWeekBody,
     CourierAdminOut,
     CourierCreate,
     CourierLocationsBody,
@@ -163,6 +164,20 @@ def _parse_time(value: str):
         except ValueError:
             continue
     raise HTTPException(status.HTTP_400_BAD_REQUEST, "start_time: ожидается HH:MM или HH:MM:SS")
+
+
+def _week_monday(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    base_date = value.astimezone(UTC).date()
+    monday_date = base_date - timedelta(days=base_date.weekday())
+    return datetime.combine(monday_date, datetime.min.time(), tzinfo=UTC)
+
+
+def _copy_week_start(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 @router.post("/locations", response_model=dict)
@@ -400,6 +415,116 @@ async def delete_shift_instance(
         payload=None,
     )
     return {"ok": True}
+
+
+@router.post("/shift-instances/copy-week", response_model=dict)
+async def copy_shift_instances_week(
+    body: CopyWeekBody,
+    session: AsyncSession = Depends(get_session),
+):
+    source_start = _copy_week_start(body.source_week_start)
+    target_start = _copy_week_start(body.target_week_start)
+    if source_start == target_start:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Неделя-получатель должна отличаться от источника")
+    source_end = source_start + timedelta(days=7)
+    target_end = target_start + timedelta(days=7)
+
+    source_stmt = select(ShiftInstance).where(
+        ShiftInstance.starts_at >= source_start,
+        ShiftInstance.starts_at < source_end,
+    ).order_by(ShiftInstance.starts_at)
+    target_stmt = select(ShiftInstance).where(
+        ShiftInstance.starts_at >= target_start,
+        ShiftInstance.starts_at < target_end,
+    ).order_by(ShiftInstance.starts_at)
+    if body.location_id is not None:
+        if not await session.get(Location, body.location_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Локация не найдена")
+        source_stmt = source_stmt.where(ShiftInstance.location_id == body.location_id)
+        target_stmt = target_stmt.where(ShiftInstance.location_id == body.location_id)
+
+    source_slots = list((await session.execute(source_stmt)).scalars().all())
+    target_slots = list((await session.execute(target_stmt)).scalars().all())
+
+    removed_empty = 0
+    kept_booked = 0
+    if body.mode == "replace_empty":
+        for slot in target_slots:
+            if slot.booked_count > 0:
+                kept_booked += 1
+                continue
+            await session.delete(slot)
+            removed_empty += 1
+        if removed_empty:
+            await session.flush()
+        target_slots = [slot for slot in target_slots if slot.booked_count > 0]
+
+    existing_keys = {
+        (
+            slot.location_id,
+            (slot.starts_at - target_start).total_seconds(),
+            (slot.ends_at - target_start).total_seconds(),
+            slot.courier_type,
+        )
+        for slot in target_slots
+    }
+    created_ids: list[str] = []
+    skipped_existing = 0
+
+    for source in source_slots:
+        target_starts_at = target_start + (source.starts_at - source_start)
+        target_ends_at = target_start + (source.ends_at - source_start)
+        key = (
+            source.location_id,
+            (target_starts_at - target_start).total_seconds(),
+            (target_ends_at - target_start).total_seconds(),
+            source.courier_type,
+        )
+        if body.mode != "append" and key in existing_keys:
+            skipped_existing += 1
+            continue
+        copy = ShiftInstance(
+            template_id=None,
+            location_id=source.location_id,
+            starts_at=target_starts_at,
+            ends_at=target_ends_at,
+            capacity=source.capacity,
+            courier_type=source.courier_type,
+            booked_count=0,
+            closed_by_admin=False,
+            booking_opens_at=None,
+            booking_closes_at=None,
+        )
+        session.add(copy)
+        await session.flush()
+        created_ids.append(str(copy.id))
+        existing_keys.add(key)
+
+    await write_audit(
+        session,
+        actor_type="admin",
+        actor_id=None,
+        entity_type="shift_instance",
+        entity_id=target_start.date().isoformat(),
+        action="copy_week",
+        payload={
+            "source_week": source_start.date().isoformat(),
+            "target_week": target_start.date().isoformat(),
+            "location_id": str(body.location_id) if body.location_id else None,
+            "mode": body.mode,
+            "created": len(created_ids),
+            "skipped_existing": skipped_existing,
+            "removed_empty": removed_empty,
+            "kept_booked": kept_booked,
+        },
+    )
+    return {
+        "created_instance_ids": created_ids,
+        "created": len(created_ids),
+        "skipped_existing": skipped_existing,
+        "removed_empty": removed_empty,
+        "kept_booked": kept_booked,
+    }
 
 
 @router.post("/shifts/generate-week", response_model=dict)

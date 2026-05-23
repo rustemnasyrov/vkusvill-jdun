@@ -44,6 +44,10 @@ class BookAssignmentBody(BaseModel):
     shift_instance_id: uuid.UUID
 
 
+class CourierLoginBody(BaseModel):
+    phone: str = Field(min_length=1, max_length=32)
+
+
 class ShiftTemplateCreate(BaseModel):
     location_id: uuid.UUID
     day_of_week: int = Field(ge=0, le=6)
@@ -74,6 +78,13 @@ class ShiftInstanceUpdate(BaseModel):
 class GenerateWeekBody(BaseModel):
     week_start: datetime = Field(description="Любой момент недели; берётся понедельник этой календарной недели")
     template_ids: list[uuid.UUID] | None = None
+
+
+class CopyWeekBody(BaseModel):
+    source_week_start: datetime
+    target_week_start: datetime
+    location_id: uuid.UUID | None = None
+    mode: Literal["skip_existing", "replace_empty", "append"] = "skip_existing"
 
 
 class LocationCreate(BaseModel):
