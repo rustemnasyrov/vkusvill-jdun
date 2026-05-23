@@ -14,3 +14,70 @@ body {
 *::after {
   box-sizing: border-box;
 }
+
+.slot-planner {
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  padding: 20px 24px;
+  background: #f8f9fa;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+}
+
+.slot-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.slot-calendar-scroll {
+  background: #fff;
+  border: 0.5px solid #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.slot-calendar-grid {
+  min-width: 0;
+}
+
+.slot-timeline-cell {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  position: relative;
+}
+
+.slot-day-label {
+  position: sticky;
+  left: 0;
+  z-index: 6;
+}
+
+.slot-day-label-header {
+  background: #f9fafb;
+  border-right: 0.5px solid #e5e7eb;
+}
+
+@media (max-width: 760px) {
+  .slot-planner {
+    padding: 16px 14px;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  .slot-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .slot-calendar-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .slot-calendar-grid {
+    min-width: 920px;
+  }
+}

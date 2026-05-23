@@ -650,7 +650,7 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
   const DAY_LABEL_W = 72;
 
   return (
-    <div style={{ fontFamily: "'Inter','Segoe UI',system-ui,sans-serif", padding: "20px 24px", background: "#f8f9fa", color: "#111827", border: "1px solid #e5e7eb", borderRadius: 16 }}>
+    <div className="slot-planner">
       {modal && <Modal slot={modal.slot} weekDates={weekDates} onSave={(s) => void handleSave(s)} onDelete={(id) => void handleDelete(id)} onClose={() => setModal(null)} />}
       {locationsOpen && (
         <LocationsModal
@@ -728,7 +728,7 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
       {errorNotice ? <p style={{ color: "#b91c1c", marginTop: 0 }}>{errorNotice}</p> : null}
       {!locations.length ? <p style={{ color: "#71717a" }}>Создайте локацию через кнопку «Локации», чтобы начать редактировать расписание.</p> : null}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 16 }}>
+      <div className="slot-stats-grid">
         {[
           ["Слотов на неделе", weekSlots.length],
           ["Курьеро-часов", totalHours],
@@ -742,9 +742,10 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
         ))}
       </div>
 
-      <div style={{ background: "#fff", border: "0.5px solid #e5e7eb", borderRadius: 12, overflow: "hidden" }}>
+      <div className="slot-calendar-scroll">
+        <div className="slot-calendar-grid">
         <div style={{ display: "flex", borderBottom: "0.5px solid #e5e7eb", background: "#f9fafb" }}>
-          <div style={{ width: DAY_LABEL_W, flexShrink: 0 }} />
+          <div className="slot-day-label slot-day-label-header" style={{ width: DAY_LABEL_W, flexShrink: 0 }} />
           <div style={{ flex: 1, position: "relative", height: 26 }}>
             {Array.from({ length: HOURS + 1 }, (_, i) => (
               <span key={i} style={{ position: "absolute", left: `${(i / HOURS) * 100}%`, transform: "translateX(-50%)", fontSize: 10, color: "#9ca3af", top: 6, whiteSpace: "nowrap" }}>
@@ -759,16 +760,17 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
           const today = isToday(d);
           return (
             <div key={i} style={{ display: "flex", borderBottom: i < 6 ? "0.5px solid #f0f0f0" : "none" }}>
-              <div style={{ width: DAY_LABEL_W, flexShrink: 0, padding: "10px 10px", borderRight: "0.5px solid #e5e7eb", background: "#fafafa" }}>
+              <div className="slot-day-label" style={{ width: DAY_LABEL_W, flexShrink: 0, padding: "10px 10px", borderRight: "0.5px solid #e5e7eb", background: "#fafafa" }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: today ? "#1D9E75" : "#374151" }}>{DAYS_RU[i]}</div>
                 <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{fmtDate(d)}</div>
               </div>
-              <div style={{ flex: 1, padding: 0, position: "relative" }}>
+              <div className="slot-timeline-cell">
                 <DayRow date={d} daySlots={slots.filter((s) => s.date === dateKey)} isToday={today} onSlotClick={openEdit} onAreaClick={openNew} />
               </div>
             </div>
           );
         })}
+        </div>
       </div>
 
       <div style={{ marginTop: 10, fontSize: 11, color: "#9ca3af", textAlign: "right" }}>* нажмите на слот для редактирования · нажмите на пустое место для добавления</div>
