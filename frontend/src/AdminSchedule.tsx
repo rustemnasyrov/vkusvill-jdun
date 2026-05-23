@@ -1,24 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import CourierSlotPlanner from "./CourierSlotPlanner";
-import type { CourierDto, LocationDto, ShiftTemplateDto } from "./types";
-import { localDateInputValue } from "./dates";
+import type { LocationDto } from "./types";
 
 const API = "/api";
 
 const ADMIN_JWT_KEY = "courier_admin_jwt";
 const LEGACY_ADMIN_TOKEN_KEY = "courier_admin_token";
-
-const TZ_PRESETS = ["Europe/Moscow", "Europe/Kaliningrad", "Asia/Yekaterinburg", "UTC"];
-
-const WEEKDAYS = [
-  { v: 0, label: "Понедельник" },
-  { v: 1, label: "Вторник" },
-  { v: 2, label: "Среда" },
-  { v: 3, label: "Четверг" },
-  { v: 4, label: "Пятница" },
-  { v: 5, label: "Суббота" },
-  { v: 6, label: "Воскресенье" },
-];
 
 function adminHeaders(accessToken: string): HeadersInit {
   return { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
@@ -26,7 +13,8 @@ function adminHeaders(accessToken: string): HeadersInit {
 
 async function readApiError(r: Response): Promise<string> {
   try {
-    const j = (await r.json()) as { detail?: unknown };
+    const j = (await r.json()) as { detail?: unknown; message?: string };
+    if (typeof j.message === "string") return j.message;
     const d = j.detail;
     if (typeof d === "string") return d;
     if (Array.isArray(d))
@@ -38,12 +26,19 @@ async function readApiError(r: Response): Promise<string> {
   return r.statusText;
 }
 
-type AdminScheduleProps = {
-  /** После успешной генерации недели — синхронизировать вкладку «Календарь» с этой неделей. */
-  onWeekGenerated?: (weekMondayYmd: string) => void;
-};
+function Logo() {
+  return (
+    <div style={{ width: "100%", display: "flex", justifyContent: "center", textAlign: "center" }}>
+      <img
+        src="/logo-vkusvill-jdun.png"
+        alt="ВкусВилл Ждун"
+        style={{ display: "block", width: "min(100%, 420px)", height: "auto", objectFit: "contain" }}
+      />
+    </div>
+  );
+}
 
-export default function AdminSchedule({ onWeekGenerated }: AdminScheduleProps) {
+export default function AdminSchedule() {
   const [token, setToken] = useState("");
   const [loginUser, setLoginUser] = useState("admin");
   const [loginPass, setLoginPass] = useState("");
@@ -54,22 +49,6 @@ export default function AdminSchedule({ onWeekGenerated }: AdminScheduleProps) {
   const [err, setErr] = useState<string | null>(null);
 
   const [locations, setLocations] = useState<LocationDto[]>([]);
-  const [templates, setTemplates] = useState<ShiftTemplateDto[]>([]);
-  const [couriers, setCouriers] = useState<CourierDto[]>([]);
-
-  const [locName, setLocName] = useState("Склад №1");
-  const [locTz, setLocTz] = useState("Europe/Moscow");
-
-  const [tplLocationId, setTplLocationId] = useState("");
-  const [tplDow, setTplDow] = useState(0);
-  const [tplStart, setTplStart] = useState("09:00");
-  const [tplDuration, setTplDuration] = useState(480);
-  const [tplCapacity, setTplCapacity] = useState(4);
-
-  const [weekDate, setWeekDate] = useState(() => localDateInputValue());
-
-  const [cCourierId, setCCourierId] = useState("");
-  const [cLocIds, setCLocIds] = useState("");
 
   const persistToken = useCallback((t: string) => {
     setToken(t);
@@ -82,44 +61,33 @@ export default function AdminSchedule({ onWeekGenerated }: AdminScheduleProps) {
     setToken("");
     setDisplayName("");
     setLocations([]);
-    setTemplates([]);
-    setCouriers([]);
     setMsg(null);
     setErr(null);
   }, []);
 
-  const refreshLists = useCallback(
+  const refreshLocations = useCallback(
     async (overrideAccessToken?: string) => {
       const raw = (overrideAccessToken ?? token).trim();
       setErr(null);
       setMsg(null);
       if (!raw) {
         setLocations([]);
-        setTemplates([]);
-        setCouriers([]);
-        return;
+        return [];
       }
       try {
-        const h = adminHeaders(raw);
-        const [lr, tr, cr] = await Promise.all([
-          fetch(`${API}/admin/locations`, { headers: h }),
-          fetch(`${API}/admin/shift-templates`, { headers: h }),
-          fetch(`${API}/admin/couriers`, { headers: h }),
-        ]);
-        if (lr.status === 401 || tr.status === 401 || cr.status === 401) {
+        const lr = await fetch(`${API}/admin/locations`, { headers: adminHeaders(raw) });
+        if (lr.status === 401) {
           logout();
           setErr("Сессия недействительна или истекла. Войдите снова.");
-          return;
+          return [];
         }
         if (!lr.ok) throw new Error(await readApiError(lr));
-        if (!tr.ok) throw new Error(await readApiError(tr));
-        if (!cr.ok) throw new Error(await readApiError(cr));
-        setLocations(await lr.json());
-        setTemplates(await tr.json());
-        setCouriers(await cr.json());
-        setMsg("Списки обновлены.");
+        const nextLocations = (await lr.json()) as LocationDto[];
+        setLocations(nextLocations);
+        return nextLocations;
       } catch (e) {
-        setErr(e instanceof Error ? e.message : "Ошибка загрузки админки");
+        setErr(e instanceof Error ? e.message : "Ошибка загрузки локаций");
+        return [];
       }
     },
     [token, logout],
@@ -139,28 +107,13 @@ export default function AdminSchedule({ onWeekGenerated }: AdminScheduleProps) {
       setToken(saved);
       setDisplayName(j.username ?? "");
       setLoginUser(j.username ?? "admin");
+      await refreshLocations(saved);
     })();
-  }, []);
+  }, [refreshLocations]);
 
   useEffect(() => {
-    void refreshLists();
-  }, [refreshLists]);
-
-  useEffect(() => {
-    if (!tplLocationId && locations.length) {
-      setTplLocationId(locations[0].id);
-    }
-  }, [locations, tplLocationId]);
-
-  const explain = useMemo(
-    () =>
-      [
-        "Здесь задаётся расписание для экрана курьера.",
-        "Войдите логином и паролем администратора (значения задаются в Docker: ADMIN_USERNAME и ADMIN_PASSWORD).",
-        "После входа вы получаете JWT — его браузер сохраняет до выхода или истечения срока.",
-      ].join(" "),
-    [],
-  );
+    if (token) void refreshLocations();
+  }, [refreshLocations, token]);
 
   const doLogin = async () => {
     setErr(null);
@@ -183,8 +136,7 @@ export default function AdminSchedule({ onWeekGenerated }: AdminScheduleProps) {
         const mj = (await mr.json()) as { username?: string };
         setDisplayName(mj.username ?? loginUser.trim());
       }
-      setMsg("Вход выполнен.");
-      await refreshLists(data.access_token);
+      await refreshLocations(data.access_token);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка входа");
     } finally {
@@ -192,327 +144,128 @@ export default function AdminSchedule({ onWeekGenerated }: AdminScheduleProps) {
     }
   };
 
-  const createLocation = async () => {
+  const createLocation = async ({ name, timezone }: { name: string; timezone: string }) => {
     setErr(null);
     setMsg(null);
     try {
       const r = await fetch(`${API}/admin/locations`, {
         method: "POST",
         headers: adminHeaders(token.trim()),
-        body: JSON.stringify({ name: locName.trim(), timezone: locTz }),
+        body: JSON.stringify({ name: name.trim(), timezone }),
       });
       if (!r.ok) throw new Error(await readApiError(r));
-      const j = await r.json();
-      setMsg(`Локация создана: ${j.id}`);
-      await refreshLists();
+      const j = (await r.json()) as { id?: string };
+      const nextLocations = await refreshLocations();
+      const created = nextLocations.find((l) => l.id === j.id) ?? nextLocations.at(-1);
+      if (!created) throw new Error("Локация создана, но список не обновился");
+      setMsg(`Локация создана: ${created.name}`);
+      return created;
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка");
+      throw e;
     }
   };
 
-  const createTemplate = async () => {
-    setErr(null);
-    setMsg(null);
-    if (!tplLocationId) {
-      setErr("Выберите локацию.");
-      return;
-    }
-    try {
-      const r = await fetch(`${API}/admin/shift-templates`, {
-        method: "POST",
-        headers: adminHeaders(token.trim()),
-        body: JSON.stringify({
-          location_id: tplLocationId,
-          day_of_week: tplDow,
-          start_time: tplStart,
-          duration_minutes: tplDuration,
-          capacity: tplCapacity,
-        }),
-      });
-      if (!r.ok) throw new Error(await readApiError(r));
-      const j = await r.json();
-      setMsg(`Шаблон создан: ${j.id}`);
-      await refreshLists();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Ошибка");
-    }
-  };
-
-  const generateWeek = async () => {
-    setErr(null);
-    setMsg(null);
-    try {
-      const week_start = new Date(`${weekDate}T12:00:00`).toISOString();
-      const r = await fetch(`${API}/admin/shifts/generate-week`, {
-        method: "POST",
-        headers: adminHeaders(token.trim()),
-        body: JSON.stringify({ week_start }),
-      });
-      if (!r.ok) throw new Error(await readApiError(r));
-      const j = await r.json();
-      const wm = typeof j.week_monday === "string" ? j.week_monday : "";
-      if (wm) onWeekGenerated?.(wm);
-      setMsg(`Сгенерировано слотов: ${j.created_instance_ids?.length ?? 0}. Неделя с ${wm || "?"}`);
-      await refreshLists();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Ошибка");
-    }
-  };
-
-  const createCourier = async () => {
-    setErr(null);
-    setMsg(null);
-    try {
-      const ids = cLocIds
-        .split(/[\s,;]+/)
-        .map((x) => x.trim())
-        .filter(Boolean);
-      const r = await fetch(`${API}/admin/couriers`, {
-        method: "POST",
-        headers: adminHeaders(token.trim()),
-        body: JSON.stringify({
-          external_ref: cCourierId.trim() || null,
-          location_ids: ids,
-        }),
-      });
-      if (!r.ok) throw new Error(await readApiError(r));
-      const j = await r.json();
-      setMsg(`Курьер создан. Скопируй UUID для поля X-Courier-Id: ${j.id}`);
-      await refreshLists();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Ошибка");
-    }
-  };
-
-  return (
-    <div>
-      {!token ? (
-        <>
-          <h2 style={{ marginTop: 0 }}>Редактор расписания</h2>
-          <p style={{ color: "#52525b", fontSize: "0.95rem", lineHeight: 1.5 }}>{explain}</p>
-        </>
-      ) : (
-        <CourierSlotPlanner accessToken={token.trim()} locations={locations} onUnauthorized={logout} />
-      )}
-
-      <section
+  if (!token) {
+    return (
+      <main
         style={{
-          marginTop: token ? "1rem" : 0,
-          marginBottom: "1rem",
-          padding: "1rem",
-          background: "#fff",
-          borderRadius: 12,
-          border: "1px solid #e4e4e7",
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          padding: "32px 16px",
+          background: "linear-gradient(160deg, #f4fff8 0%, #f8f9fa 46%, #eef8f2 100%)",
         }}
       >
-        <h3 style={{ marginTop: 0 }}>Вход администратора</h3>
-        {!token ? (
-          <>
-            <p style={{ marginTop: 0, color: "#52525b", fontSize: "0.9rem" }}>
-              По умолчанию в Docker: логин <code>admin</code>, пароль <code>dev-password-change-me</code> (переопределите{" "}
-              <code>ADMIN_PASSWORD</code> в compose).
-            </p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-              <label>
-                Логин
-                <input
-                  style={{ display: "block", marginTop: 4, padding: "0.45rem 0.6rem", minWidth: 160 }}
-                  autoComplete="username"
-                  value={loginUser}
-                  onChange={(e) => setLoginUser(e.target.value)}
-                />
-              </label>
-              <label>
-                Пароль
-                <input
-                  style={{ display: "block", marginTop: 4, padding: "0.45rem 0.6rem", minWidth: 160 }}
-                  type="password"
-                  autoComplete="current-password"
-                  value={loginPass}
-                  onChange={(e) => setLoginPass(e.target.value)}
-                />
-              </label>
-              <button type="button" disabled={loginBusy} onClick={() => void doLogin()}>
-                {loginBusy ? "Вход…" : "Войти"}
-              </button>
-            </div>
-          </>
-        ) : (
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <span>
-              Вы вошли как <strong>{displayName || "admin"}</strong>
-            </span>
-            <button type="button" onClick={() => void refreshLists()}>
-              Обновить списки
-            </button>
-            <button type="button" onClick={logout}>
-              Выйти
+        <section
+          style={{
+            width: "min(100%, 440px)",
+            background: "#fff",
+            border: "1px solid #dcefe4",
+            borderRadius: 28,
+            padding: "34px 34px 30px",
+            boxShadow: "0 24px 70px rgba(16, 92, 54, 0.12)",
+          }}
+        >
+          <Logo />
+          <p style={{ margin: "30px 0 24px", color: "#5b6470", fontSize: 15 }}>
+            Войдите, чтобы управлять слотами курьеров и локациями.
+          </p>
+
+          <div style={{ display: "grid", gap: 14 }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: "#374151" }}>
+              Логин
+              <input
+                style={loginInputStyle}
+                autoComplete="username"
+                value={loginUser}
+                onChange={(e) => setLoginUser(e.target.value)}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: "#374151" }}>
+              Пароль
+              <input
+                style={loginInputStyle}
+                type="password"
+                autoComplete="current-password"
+                value={loginPass}
+                onChange={(e) => setLoginPass(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void doLogin();
+                }}
+              />
+            </label>
+            {err ? (
+              <div style={{ color: "#b91c1c", fontSize: 13 }} role="alert">
+                {err}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              disabled={loginBusy}
+              onClick={() => void doLogin()}
+              style={{
+                marginTop: 4,
+                border: "none",
+                borderRadius: 14,
+                padding: "13px 18px",
+                background: "#1D9E75",
+                color: "#fff",
+                fontWeight: 800,
+                fontSize: 15,
+                cursor: loginBusy ? "wait" : "pointer",
+                boxShadow: "0 10px 24px rgba(29, 158, 117, 0.24)",
+              }}
+            >
+              {loginBusy ? "Входим..." : "Войти"}
             </button>
           </div>
-        )}
-      </section>
+        </section>
+      </main>
+    );
+  }
 
-      {msg ? (
-        <p style={{ color: "#15803d", marginTop: "0.75rem" }} role="status">
-          {msg}
-        </p>
-      ) : null}
-      {err ? (
-        <p style={{ color: "#b91c1c", marginTop: "0.75rem" }} role="alert">
-          {err}
-        </p>
-      ) : null}
-
-      {!token ? (
-        <p style={{ color: "#71717a", marginTop: "1rem" }}>Войдите, чтобы создавать локации, шаблоны и курьеров.</p>
-      ) : (
-        <>
-          <h3 style={{ marginTop: "1.5rem" }}>Дополнительно</h3>
-          <section style={{ marginTop: "1.25rem", padding: "1rem", background: "#fff", borderRadius: 12, border: "1px solid #e4e4e7" }}>
-            <h3 style={{ marginTop: 0 }}>1. Локация</h3>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Название" />
-              <select value={locTz} onChange={(e) => setLocTz(e.target.value)}>
-                {TZ_PRESETS.map((z) => (
-                  <option key={z} value={z}>
-                    {z}
-                  </option>
-                ))}
-              </select>
-              <button type="button" onClick={() => void createLocation()}>
-                Создать локацию
-              </button>
-            </div>
-            {locations.length ? (
-              <ul style={{ marginBottom: 0 }}>
-                {locations.map((l) => (
-                  <li key={l.id}>
-                    <code>{l.id}</code> — {l.name} ({l.timezone})
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p style={{ color: "#71717a" }}>Пока нет локаций.</p>
-            )}
-          </section>
-
-          <section style={{ marginTop: "1rem", padding: "1rem", background: "#fff", borderRadius: 12, border: "1px solid #e4e4e7" }}>
-            <h3 style={{ marginTop: 0 }}>2. Шаблон смены (повтор)</h3>
-            <p style={{ marginTop: 0, color: "#52525b", fontSize: "0.9rem" }}>
-              Время начала и длительность задают интервал одной смены. Поле «мест на слот» — сколько курьеров может записаться на один и тот же интервал.
-            </p>
-            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
-              <label>
-                Локация
-                <select style={{ display: "block", width: "100%", marginTop: 4 }} value={tplLocationId} onChange={(e) => setTplLocationId(e.target.value)}>
-                  <option value="">—</option>
-                  {locations.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                День недели
-                <select style={{ display: "block", width: "100%", marginTop: 4 }} value={tplDow} onChange={(e) => setTplDow(Number(e.target.value))}>
-                  {WEEKDAYS.map((d) => (
-                    <option key={d.v} value={d.v}>
-                      {d.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Начало (местное время локации в шаблоне*)
-                <input style={{ display: "block", width: "100%", marginTop: 4 }} type="time" value={tplStart} onChange={(e) => setTplStart(e.target.value)} />
-              </label>
-              <label>
-                Длительность (мин)
-                <input
-                  style={{ display: "block", width: "100%", marginTop: 4 }}
-                  type="number"
-                  min={30}
-                  step={30}
-                  value={tplDuration}
-                  onChange={(e) => setTplDuration(Number(e.target.value))}
-                />
-              </label>
-              <label>
-                Человек на слот
-                <input
-                  style={{ display: "block", width: "100%", marginTop: 4 }}
-                  type="number"
-                  min={1}
-                  value={tplCapacity}
-                  onChange={(e) => setTplCapacity(Number(e.target.value))}
-                />
-              </label>
-            </div>
-            <p style={{ fontSize: "0.82rem", color: "#71717a", marginBottom: 8 }}>
-              *Фактическое время слота считается в часовом поясе локации при генерации недели.
-            </p>
-            <button type="button" onClick={() => void createTemplate()}>
-              Сохранить шаблон
-            </button>
-            {templates.length ? (
-              <ul style={{ marginTop: "0.75rem", marginBottom: 0 }}>
-                {templates.map((t) => {
-                  const loc = locations.find((l) => l.id === t.location_id);
-                  return (
-                    <li key={t.id}>
-                      {loc?.name ?? "локация"} · {WEEKDAYS[t.day_of_week]?.label ?? t.day_of_week} · с {t.start_time.slice(0, 5)} ·{" "}
-                      {t.duration_minutes} мин · мест: {t.capacity}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-          </section>
-
-          <section style={{ marginTop: "1rem", padding: "1rem", background: "#fff", borderRadius: 12, border: "1px solid #e4e4e7" }}>
-            <h3 style={{ marginTop: 0 }}>3. Сгенерировать слоты на неделю</h3>
-            <p style={{ marginTop: 0, color: "#52525b", fontSize: "0.9rem" }}>
-              Укажите любую дату нужной недели — система возьмёт понедельник этой недели и создаст экземпляры смен по всем активным шаблонам (без дубликатов).
-            </p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <input type="date" value={weekDate} onChange={(e) => setWeekDate(e.target.value)} />
-              <button type="button" onClick={() => void generateWeek()}>
-                Сгенерировать
-              </button>
-            </div>
-          </section>
-
-          <section style={{ marginTop: "1rem", padding: "1rem", background: "#fff", borderRadius: 12, border: "1px solid #e4e4e7" }}>
-            <h3 style={{ marginTop: 0 }}>Курьер для теста</h3>
-            <p style={{ marginTop: 0, color: "#52525b", fontSize: "0.9rem" }}>
-              Создайте курьера и привяжите UUID локаций через запятую (из списка выше).
-            </p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <input placeholder="метка (необязательно)" value={cCourierId} onChange={(e) => setCCourierId(e.target.value)} />
-              <input
-                style={{ flex: "1 1 280px" }}
-                placeholder="uuid локаций через запятую"
-                value={cLocIds}
-                onChange={(e) => setCLocIds(e.target.value)}
-              />
-              <button type="button" onClick={() => void createCourier()}>
-                Создать курьера
-              </button>
-            </div>
-            {couriers.length ? (
-              <ul style={{ marginTop: "0.75rem", marginBottom: 0 }}>
-                {couriers.map((c) => (
-                  <li key={c.id}>
-                    <code>{c.id}</code> — {c.status}
-                    {c.external_ref ? ` (${c.external_ref})` : ""} · локаций: {c.location_ids.length}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </section>
-        </>
-      )}
-    </div>
+  return (
+    <CourierSlotPlanner
+      accessToken={token.trim()}
+      locations={locations}
+      adminName={displayName || loginUser}
+      onUnauthorized={logout}
+      onLogout={logout}
+      onRefreshLocations={() => refreshLocations()}
+      onCreateLocation={createLocation}
+      notice={msg}
+      errorNotice={err}
+    />
   );
 }
+
+const loginInputStyle = {
+  width: "100%",
+  border: "1px solid #d1d5db",
+  borderRadius: 12,
+  padding: "12px 13px",
+  fontSize: 15,
+  outline: "none",
+  background: "#fff",
+};

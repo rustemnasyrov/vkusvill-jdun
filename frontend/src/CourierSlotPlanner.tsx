@@ -7,6 +7,7 @@ const H_START = 7;
 const H_END = 23;
 const HOURS = H_END - H_START;
 const DAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+const TZ_PRESETS = ["Europe/Moscow", "Europe/Kaliningrad", "Asia/Yekaterinburg", "UTC"];
 const TYPE_LABEL: Record<ShiftSlot["courier_type"], string> = {
   teal: "Пеший",
   blue: "Вело",
@@ -37,7 +38,13 @@ type ModalSlot = Partial<PlannerSlot> & Pick<PlannerSlot, "date" | "start" | "en
 type Props = {
   accessToken: string;
   locations: LocationDto[];
+  adminName: string;
   onUnauthorized: () => void;
+  onLogout: () => void;
+  onRefreshLocations: () => Promise<LocationDto[]>;
+  onCreateLocation: (location: { name: string; timezone: string }) => Promise<LocationDto>;
+  notice?: string | null;
+  errorNotice?: string | null;
 };
 
 function adminHeaders(accessToken: string): HeadersInit {
@@ -250,6 +257,176 @@ function Modal({
   );
 }
 
+function LocationsModal({
+  locations,
+  selectedLocationId,
+  onSelect,
+  onCreate,
+  onRefresh,
+  onClose,
+}: {
+  locations: LocationDto[];
+  selectedLocationId: string;
+  onSelect: (id: string) => void;
+  onCreate: (location: { name: string; timezone: string }) => Promise<LocationDto>;
+  onRefresh: () => Promise<LocationDto[]>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("Склад №1");
+  const [timezone, setTimezone] = useState("Europe/Moscow");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleCreate() {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError("Введите название локации.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await onCreate({ name: trimmed, timezone });
+      onSelect(created.id);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось создать локацию");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputStyle = {
+    width: "100%",
+    padding: "10px 12px",
+    border: "1px solid #d1d5db",
+    borderRadius: 10,
+    fontSize: 14,
+    outline: "none",
+    background: "#fff",
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15, 23, 42, 0.42)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+        zIndex: 1000,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(100%, 560px)",
+          maxHeight: "90vh",
+          overflow: "auto",
+          background: "#fff",
+          borderRadius: 18,
+          padding: 24,
+          boxShadow: "0 24px 80px rgba(15, 23, 42, 0.24)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 22 }}>Локации</h2>
+            <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: 13 }}>Выберите склад или добавьте новый.</p>
+          </div>
+          <div style={{ flex: 1 }} />
+          <button type="button" onClick={() => void onRefresh()} style={{ ...smallButtonStyle, width: "auto", padding: "7px 12px", fontSize: 13 }}>
+            Обновить
+          </button>
+          <button type="button" onClick={onClose} style={{ ...smallButtonStyle, width: 32, height: 32, fontSize: 16 }}>
+            x
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
+          {locations.length ? (
+            locations.map((location) => {
+              const selected = location.id === selectedLocationId;
+              return (
+                <button
+                  key={location.id}
+                  type="button"
+                  onClick={() => {
+                    onSelect(location.id);
+                    onClose();
+                  }}
+                  style={{
+                    textAlign: "left",
+                    border: `1px solid ${selected ? "#1D9E75" : "#e5e7eb"}`,
+                    background: selected ? "#eefbf5" : "#fff",
+                    borderRadius: 12,
+                    padding: "12px 14px",
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <strong style={{ color: "#111827" }}>{location.name}</strong>
+                    {selected ? <span style={{ color: "#1D9E75", fontSize: 12, fontWeight: 700 }}>выбрана</span> : null}
+                  </div>
+                  <div style={{ color: "#6b7280", fontSize: 12, marginTop: 3 }}>{location.timezone}</div>
+                </button>
+              );
+            })
+          ) : (
+            <div style={{ padding: 14, borderRadius: 12, background: "#f9fafb", color: "#6b7280" }}>Локаций пока нет.</div>
+          )}
+        </div>
+
+        <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 18 }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Добавить локацию</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 190px", gap: 10 }}>
+            <label style={{ fontSize: 12, color: "#6b7280", display: "grid", gap: 5 }}>
+              Название
+              <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="Например, Склад №2" />
+            </label>
+            <label style={{ fontSize: 12, color: "#6b7280", display: "grid", gap: 5 }}>
+              Часовой пояс
+              <select style={inputStyle} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+                {TZ_PRESETS.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {error ? <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 10 }}>{error}</div> : null}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+            <button type="button" onClick={onClose} style={{ ...smallButtonStyle, width: "auto", padding: "8px 14px", fontSize: 13 }}>
+              Отмена
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleCreate()}
+              style={{
+                border: "none",
+                borderRadius: 10,
+                background: "#1D9E75",
+                color: "#fff",
+                padding: "8px 16px",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: busy ? "wait" : "pointer",
+              }}
+            >
+              {busy ? "Создаём..." : "Создать"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NowMarker() {
   const [pct, setPct] = useState<number | null>(null);
   useEffect(() => {
@@ -348,10 +525,11 @@ function DayRow({
   );
 }
 
-export default function CourierSlotPlanner({ accessToken, locations, onUnauthorized }: Props) {
+export default function CourierSlotPlanner({ accessToken, locations, adminName, onUnauthorized, onLogout, onRefreshLocations, onCreateLocation, notice, errorNotice }: Props) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [slots, setSlots] = useState<PlannerSlot[]>([]);
   const [modal, setModal] = useState<{ slot: ModalSlot } | null>(null);
+  const [locationsOpen, setLocationsOpen] = useState(false);
   const [locationId, setLocationId] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -474,6 +652,28 @@ export default function CourierSlotPlanner({ accessToken, locations, onUnauthori
   return (
     <div style={{ fontFamily: "'Inter','Segoe UI',system-ui,sans-serif", padding: "20px 24px", background: "#f8f9fa", color: "#111827", border: "1px solid #e5e7eb", borderRadius: 16 }}>
       {modal && <Modal slot={modal.slot} weekDates={weekDates} onSave={(s) => void handleSave(s)} onDelete={(id) => void handleDelete(id)} onClose={() => setModal(null)} />}
+      {locationsOpen && (
+        <LocationsModal
+          locations={locations}
+          selectedLocationId={locationId}
+          onSelect={setLocationId}
+          onCreate={onCreateLocation}
+          onRefresh={onRefreshLocations}
+          onClose={() => setLocationsOpen(false)}
+        />
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
+        <img src="/logo-vkusvill-jdun.png" alt="ВкусВилл Ждун" style={{ display: "block", width: "clamp(160px, 24vw, 260px)", height: "auto", objectFit: "contain" }} />
+        <div>
+          <div style={{ color: "#6b7280", fontSize: 13, marginTop: 3 }}>Слоты курьеров по дням и типам доставки</div>
+        </div>
+        <div style={{ flex: 1 }} />
+        <span style={{ color: "#6b7280", fontSize: 13 }}>admin: {adminName}</span>
+        <button type="button" onClick={onLogout} style={{ ...smallButtonStyle, width: "auto", padding: "7px 12px", fontSize: 13 }}>
+          Выйти
+        </button>
+      </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -498,6 +698,9 @@ export default function CourierSlotPlanner({ accessToken, locations, onUnauthori
             </option>
           ))}
         </select>
+        <button onClick={() => setLocationsOpen(true)} style={{ ...smallButtonStyle, width: "auto", padding: "5px 14px", fontSize: 13 }}>
+          Локации
+        </button>
         <button onClick={() => void loadSlots()} disabled={loading || !locationId} style={{ ...btnStyle, width: "auto", padding: "5px 14px", fontSize: 13 }}>
           {loading ? "Загрузка..." : "Обновить"}
         </button>
@@ -520,8 +723,10 @@ export default function CourierSlotPlanner({ accessToken, locations, onUnauthori
       </div>
 
       {message ? <p style={{ color: "#15803d", marginTop: 0 }}>{message}</p> : null}
+      {notice ? <p style={{ color: "#15803d", marginTop: 0 }}>{notice}</p> : null}
       {error ? <p style={{ color: "#b91c1c", marginTop: 0 }}>{error}</p> : null}
-      {!locations.length ? <p style={{ color: "#71717a" }}>Создайте локацию ниже, чтобы начать редактировать расписание.</p> : null}
+      {errorNotice ? <p style={{ color: "#b91c1c", marginTop: 0 }}>{errorNotice}</p> : null}
+      {!locations.length ? <p style={{ color: "#71717a" }}>Создайте локацию через кнопку «Локации», чтобы начать редактировать расписание.</p> : null}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 16 }}>
         {[
@@ -572,6 +777,21 @@ export default function CourierSlotPlanner({ accessToken, locations, onUnauthori
 }
 
 const btnStyle = {
+  width: 32,
+  height: 32,
+  border: "0.5px solid #d1d5db",
+  borderRadius: 8,
+  background: "#fff",
+  cursor: "pointer",
+  fontSize: 18,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "#374151",
+  fontFamily: "inherit",
+};
+
+const smallButtonStyle = {
   width: 32,
   height: 32,
   border: "0.5px solid #d1d5db",
