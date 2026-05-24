@@ -190,7 +190,22 @@ body {
   position: relative;
 }
 
+.slot-calendar-day-row {
+  display: flex;
+  border-top: 1px solid #d9dee6;
+}
+
+.slot-calendar-day-row:nth-child(odd) {
+  background: #fbfcfd;
+}
+
 .slot-day-label {
+  align-content: start;
+  background: #fafafa;
+  border-right: 1px solid #d9dee6;
+  display: grid;
+  gap: 3px;
+  padding: 10px;
   position: sticky;
   left: 0;
   z-index: 6;
@@ -198,7 +213,65 @@ body {
 
 .slot-day-label-header {
   background: #f9fafb;
-  border-right: 0.5px solid #e5e7eb;
+  border-right: 1px solid #d9dee6;
+  padding: 0;
+}
+
+.slot-day-copy-button {
+  align-self: start;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  color: #4b5563;
+  cursor: pointer;
+  display: inline-grid;
+  height: 28px;
+  margin-top: 7px;
+  padding: 0;
+  place-items: center;
+  position: relative;
+  width: 28px;
+}
+
+.slot-day-copy-button svg {
+  fill: none;
+  height: 15px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  width: 15px;
+}
+
+.slot-day-copy-button::after {
+  background: #111827;
+  border-radius: 7px;
+  color: #fff;
+  content: attr(aria-label);
+  font-size: 11px;
+  left: 50%;
+  line-height: 1.2;
+  margin-top: 6px;
+  opacity: 0;
+  padding: 6px 8px;
+  pointer-events: none;
+  position: absolute;
+  top: 100%;
+  transform: translate(-50%, 4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  white-space: nowrap;
+  z-index: 20;
+}
+
+.slot-day-copy-button:hover::after,
+.slot-day-copy-button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.slot-day-copy-button:hover {
+  border-color: #1d9e75;
+  color: #1d9e75;
 }
 
 .courier-login-page {

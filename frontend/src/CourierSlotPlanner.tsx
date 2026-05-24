@@ -103,6 +103,20 @@ function minToTime(m: number) {
   return `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
 }
 
+function dateInputToLocalDate(value: string) {
+  return new Date(`${value}T00:00:00`);
+}
+
+function dateRangeInputValues(from: string, to: string) {
+  const start = dateInputToLocalDate(from);
+  const end = dateInputToLocalDate(to);
+  const dates: string[] = [];
+  for (let d = start; d <= end; d = addDays(d, 1)) {
+    dates.push(localDateInputValue(d));
+  }
+  return dates;
+}
+
 function fracToX(min: number) {
   return ((min - H_START * 60) / (HOURS * 60)) * 100;
 }
@@ -126,12 +140,14 @@ function toPlannerSlot(slot: ShiftSlot): PlannerSlot {
 function Modal({
   slot,
   weekDates,
+  assignedCouriers,
   onSave,
   onDelete,
   onClose,
 }: {
   slot: ModalSlot;
   weekDates: Date[];
+  assignedCouriers: CourierDto[];
   onSave: (slot: Pick<PlannerSlot, "date" | "start" | "end" | "count" | "type">) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
@@ -182,7 +198,7 @@ function Modal({
           background: "#fff",
           borderRadius: 14,
           padding: "22px 24px",
-          width: 340,
+          width: 400,
           maxWidth: "92vw",
           boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
         }}
@@ -235,6 +251,23 @@ function Modal({
 
         {slot.booked_count ? (
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>Уже записано: {slot.booked_count}. Удаление такого слота недоступно.</div>
+        ) : null}
+        {slot.id ? (
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 10, marginBottom: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginBottom: 8 }}>Записанные курьеры</div>
+            {assignedCouriers.length ? (
+              <div style={{ display: "grid", gap: 6 }}>
+                {assignedCouriers.map((courier) => (
+                  <div key={courier.id} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#4b5563" }}>
+                    <strong style={{ color: "#111827" }}>{courier.full_name || courier.phone || courier.id.slice(0, 8)}</strong>
+                    <span>{courier.phone}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "#9ca3af" }}>Пока никого нет.</div>
+            )}
+          </div>
         ) : null}
         {error && <div style={{ fontSize: 12, color: "#dc2626", marginBottom: 10 }}>{error}</div>}
 
@@ -338,6 +371,97 @@ function CopyWeekModal({
               <option value="append">Добавить рядом</option>
             </select>
           </label>
+        </div>
+        {error ? <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p> : null}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+          <button type="button" onClick={onClose} style={{ ...smallButtonStyle, width: "auto", padding: "8px 14px", fontSize: 13 }}>Отмена</button>
+          <button type="button" onClick={() => void submit()} disabled={busy} style={{ padding: "8px 16px", border: "none", borderRadius: 10, background: busy ? "#9ca3af" : "#1D9E75", color: "#fff", fontWeight: 700 }}>
+            {busy ? "Копируем..." : "Копировать"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CopyDayModal({
+  sourceDate,
+  sourceSlots,
+  onCopy,
+  onClose,
+}: {
+  sourceDate: string;
+  sourceSlots: PlannerSlot[];
+  onCopy: (body: { sourceDate: string; targetStart: string; targetEnd: string; types: ShiftSlot["courier_type"][] }) => Promise<void>;
+  onClose: () => void;
+}) {
+  const sourceDateObject = dateInputToLocalDate(sourceDate);
+  const defaultTarget = localDateInputValue(addDays(sourceDateObject, 1));
+  const [targetStart, setTargetStart] = useState(defaultTarget);
+  const [targetEnd, setTargetEnd] = useState(defaultTarget);
+  const [types, setTypes] = useState<ShiftSlot["courier_type"][]>(["teal", "blue", "amber", "purple"]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (dateInputToLocalDate(targetEnd) < dateInputToLocalDate(targetStart)) {
+        throw new Error("Дата окончания должна быть не раньше даты начала");
+      }
+      if (!types.length) {
+        throw new Error("Выберите хотя бы один тип слотов");
+      }
+      await onCopy({ sourceDate, targetStart, targetEnd, types });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось скопировать слоты");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputStyle = { padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 9, font: "inherit" };
+  const selectedCount = sourceSlots.filter((slot) => types.includes(slot.type)).length;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgb(15 23 42 / 0.35)", display: "grid", placeItems: "center", zIndex: 60, padding: 16 }} onClick={onClose}>
+      <div style={{ width: "min(520px, 100%)", background: "#fff", borderRadius: 18, padding: 20, boxShadow: "0 24px 80px rgb(15 23 42 / 0.25)" }} onClick={(e) => e.stopPropagation()}>
+        <h2 style={{ margin: "0 0 6px", fontSize: 22 }}>Копировать день</h2>
+        <p style={{ margin: "0 0 14px", color: "#6b7280", fontSize: 13 }}>
+          Источник: {fmtDate(sourceDateObject)} · выбрано слотов: {selectedCount}
+        </p>
+        <div style={{ display: "grid", gap: 12 }}>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
+            Копировать с
+            <input type="date" value={targetStart} onChange={(e) => setTargetStart(e.target.value)} style={inputStyle} />
+          </label>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
+            Копировать по
+            <input type="date" value={targetEnd} onChange={(e) => setTargetEnd(e.target.value)} style={inputStyle} />
+          </label>
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 12, color: "#6b7280" }}>Типы слотов</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {Object.entries(TYPE_LABEL).map(([value, label]) => {
+                const type = value as ShiftSlot["courier_type"];
+                const checked = types.includes(type);
+                return (
+                  <label key={value} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 9px", border: "1px solid #e5e7eb", borderRadius: 999, background: checked ? "#eefbf5" : "#fff", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) =>
+                        setTypes((prev) => (e.target.checked ? [...prev, type] : prev.filter((item) => item !== type)))
+                      }
+                    />
+                    {TYPE_ICON[type]} {label}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
         </div>
         {error ? <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p> : null}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
@@ -1103,10 +1227,11 @@ function DayRow({
         const right = fracToX(endMin);
         const width = Math.max(right - left, 1.5);
         const st = TYPE_STYLES[s.type] || TYPE_STYLES.teal;
+        const full = s.booked_count >= s.count;
         return (
           <div
             key={s.id}
-            title={`${s.start}-${s.end} · ${s.booked_count}/${s.count}`}
+            title={`${s.start}-${s.end} · ${TYPE_LABEL[s.type]} · занято ${s.booked_count}/${s.count}${full ? " · полный" : ""}`}
             onClick={(e) => {
               e.stopPropagation();
               onSlotClick(s);
@@ -1120,7 +1245,7 @@ function DayRow({
               left: `${left}%`,
               width: `${width}%`,
               background: s.closed_by_admin ? "#e5e7eb" : st.bg,
-              border: `1px solid ${s.closed_by_admin ? "#cbd5e1" : st.border}`,
+              border: `1px solid ${s.closed_by_admin ? "#cbd5e1" : full ? "#00c853" : st.border}`,
               borderRadius: 6,
               padding: "0 8px",
               display: "flex",
@@ -1136,9 +1261,9 @@ function DayRow({
               boxSizing: "border-box",
             }}
           >
-            {TYPE_LABEL[s.type]}
+            {s.start}-{s.end}
             <span style={{ opacity: 0.8, marginLeft: 4 }}>
-              {s.booked_count}/{s.count}
+              {TYPE_LABEL[s.type]} · {s.booked_count}/{s.count}{full ? " · полный" : ""}
             </span>
           </div>
         );
@@ -1151,9 +1276,12 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
   const [activeTab, setActiveTab] = useState<PlannerTab>("slots");
   const [weekOffset, setWeekOffset] = useState(0);
   const [slots, setSlots] = useState<PlannerSlot[]>([]);
+  const [assignments, setAssignments] = useState<AssignmentDto[]>([]);
+  const [couriers, setCouriers] = useState<CourierDto[]>([]);
   const [modal, setModal] = useState<{ slot: ModalSlot } | null>(null);
   const [locationsOpen, setLocationsOpen] = useState(false);
   const [copyWeekOpen, setCopyWeekOpen] = useState(false);
+  const [copyDayDate, setCopyDayDate] = useState<string | null>(null);
   const [locationId, setLocationId] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -1194,6 +1322,25 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
     }
   }, [accessToken, locationId, onUnauthorized, weekMonday]);
 
+  const loadAssignmentContext = useCallback(async () => {
+    try {
+      const [assignmentsResponse, couriersResponse] = await Promise.all([
+        fetch(`${API}/admin/assignments`, { headers: adminHeaders(accessToken) }),
+        fetch(`${API}/admin/couriers`, { headers: adminHeaders(accessToken) }),
+      ]);
+      if (assignmentsResponse.status === 401 || couriersResponse.status === 401) {
+        onUnauthorized();
+        throw new Error("Сессия недействительна или истекла. Войдите снова.");
+      }
+      if (!assignmentsResponse.ok) throw new Error(await readApiError(assignmentsResponse));
+      if (!couriersResponse.ok) throw new Error(await readApiError(couriersResponse));
+      setAssignments(await assignmentsResponse.json());
+      setCouriers(await couriersResponse.json());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось загрузить список записанных курьеров");
+    }
+  }, [accessToken, onUnauthorized]);
+
   useEffect(() => {
     if (accessToken && locationId) void loadSlots();
   }, [accessToken, locationId, loadSlots]);
@@ -1204,6 +1351,7 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
 
   function openEdit(slot: PlannerSlot) {
     setModal({ slot });
+    void loadAssignmentContext();
   }
 
   async function handleSave({ date, start, end, count, type }: Pick<PlannerSlot, "date" | "start" | "end" | "count" | "type">) {
@@ -1279,6 +1427,50 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
     }
   }
 
+  async function handleCopyDay(body: { sourceDate: string; targetStart: string; targetEnd: string; types: ShiftSlot["courier_type"][] }) {
+    const sourceSlots = slots.filter((slot) => slot.date === body.sourceDate && body.types.includes(slot.type));
+    if (!sourceSlots.length) {
+      throw new Error("В выбранном дне нет слотов выбранных типов");
+    }
+    const existingKeys = new Set(slots.map((slot) => `${slot.date}|${slot.location_id}|${slot.start}|${slot.end}|${slot.type}`));
+    let created = 0;
+    let skipped = 0;
+
+    for (const targetDate of dateRangeInputValues(body.targetStart, body.targetEnd)) {
+      if (targetDate === body.sourceDate) {
+        skipped += sourceSlots.length;
+        continue;
+      }
+      for (const slot of sourceSlots) {
+        const key = `${targetDate}|${slot.location_id}|${slot.start}|${slot.end}|${slot.type}`;
+        if (existingKeys.has(key)) {
+          skipped += 1;
+          continue;
+        }
+        const r = await fetch(`${API}/admin/shift-instances`, {
+          method: "POST",
+          headers: adminHeaders(accessToken),
+          body: JSON.stringify({
+            location_id: slot.location_id,
+            starts_at: new Date(`${targetDate}T${slot.start}:00`).toISOString(),
+            ends_at: new Date(`${targetDate}T${slot.end}:00`).toISOString(),
+            capacity: slot.count,
+            courier_type: slot.type,
+          }),
+        });
+        if (r.status === 401) {
+          onUnauthorized();
+          throw new Error("Сессия недействительна или истекла. Войдите снова.");
+        }
+        if (!r.ok) throw new Error(await readApiError(r));
+        existingKeys.add(key);
+        created += 1;
+      }
+    }
+    setMessage(`День скопирован: создано ${created}, пропущено ${skipped}.`);
+    await loadSlots();
+  }
+
   const peak = (() => {
     let p = 0;
     for (let t = H_START * 60; t < H_END * 60; t += 15) {
@@ -1292,12 +1484,19 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
   })();
   const totalHours = Math.round(weekSlots.reduce((a, s) => a + ((timeToMin(s.end) - timeToMin(s.start)) / 60) * s.count, 0));
   const avgCount = weekSlots.length ? Math.round(weekSlots.reduce((a, s) => a + s.count, 0) / weekSlots.length) : 0;
+  const modalAssignedCouriers = modal?.slot.id
+    ? assignments
+        .filter((assignment) => assignment.status === "confirmed" && assignment.shift_instance_id === modal.slot.id)
+        .map((assignment) => couriers.find((courier) => courier.id === assignment.courier_id))
+        .filter((courier): courier is CourierDto => Boolean(courier))
+    : [];
   const DAY_LABEL_W = 72;
 
   return (
     <div className="slot-planner">
-      {modal && <Modal slot={modal.slot} weekDates={weekDates} onSave={(s) => void handleSave(s)} onDelete={(id) => void handleDelete(id)} onClose={() => setModal(null)} />}
+      {modal && <Modal slot={modal.slot} weekDates={weekDates} assignedCouriers={modalAssignedCouriers} onSave={(s) => void handleSave(s)} onDelete={(id) => void handleDelete(id)} onClose={() => setModal(null)} />}
       {copyWeekOpen && <CopyWeekModal weekMonday={weekMonday} locations={locations} selectedLocationId={locationId} onCopy={handleCopyWeek} onClose={() => setCopyWeekOpen(false)} />}
+      {copyDayDate && <CopyDayModal sourceDate={copyDayDate} sourceSlots={slots.filter((slot) => slot.date === copyDayDate)} onCopy={handleCopyDay} onClose={() => setCopyDayDate(null)} />}
       {locationsOpen && (
         <LocationsModal
           locations={locations}
@@ -1423,10 +1622,25 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
           const dateKey = localDateInputValue(d);
           const today = isToday(d);
           return (
-            <div key={i} style={{ display: "flex", borderBottom: i < 6 ? "0.5px solid #f0f0f0" : "none" }}>
-              <div className="slot-day-label" style={{ width: DAY_LABEL_W, flexShrink: 0, padding: "10px 10px", borderRight: "0.5px solid #e5e7eb", background: "#fafafa" }}>
+            <div key={i} className="slot-calendar-day-row">
+              <div className="slot-day-label" style={{ width: DAY_LABEL_W, flexShrink: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: today ? "#1D9E75" : "#374151" }}>{DAYS_RU[i]}</div>
                 <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{fmtDate(d)}</div>
+                <button
+                  type="button"
+                  className="slot-day-copy-button"
+                  aria-label="Копировать слоты этого дня"
+                  title="Копировать слоты этого дня"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCopyDayDate(dateKey);
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 8.5A2.5 2.5 0 0 1 10.5 6h6A2.5 2.5 0 0 1 19 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-6A2.5 2.5 0 0 1 8 16.5v-8Z" />
+                    <path d="M5 14.5v-8A2.5 2.5 0 0 1 7.5 4h6" />
+                  </svg>
+                </button>
               </div>
               <div className="slot-timeline-cell">
                 <DayRow date={d} daySlots={slots.filter((s) => s.date === dateKey)} isToday={today} onSlotClick={openEdit} onAreaClick={openNew} />
