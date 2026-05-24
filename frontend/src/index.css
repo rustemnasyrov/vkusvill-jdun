@@ -138,7 +138,13 @@ body {
 
 .courier-col-action {
   text-align: right;
-  width: 92px;
+  width: 172px;
+}
+
+.courier-row-actions {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .courier-type-icon {

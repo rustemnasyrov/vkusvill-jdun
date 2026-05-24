@@ -21,6 +21,7 @@ from app.schemas import (
     CourierCreate,
     CourierLocationsBody,
     CourierStatusBody,
+    CourierUpdate,
     GenerateWeekBody,
     LocationCreate,
     LocationOut,
@@ -238,6 +239,59 @@ async def create_courier(
         payload={"phone": phone, "courier_type": body.courier_type},
     )
     return {"id": str(c.id)}
+
+
+@router.put("/couriers/{courier_id}", response_model=CourierAdminOut)
+async def update_courier(
+    courier_id: uuid.UUID,
+    body: CourierUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    c = await session.get(Courier, courier_id, options=[selectinload(Courier.locations)])
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курьер не найден")
+
+    phone = body.phone.strip()
+    duplicate = (
+        await session.execute(
+            select(Courier.id).where(Courier.phone == phone, Courier.id != courier_id)
+        )
+    ).first()
+    if duplicate:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Курьер с таким телефоном уже есть")
+    for lid in body.location_ids:
+        if not await session.get(Location, lid):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Локация {lid} не найдена")
+
+    c.full_name = body.full_name.strip()
+    c.phone = phone
+    c.external_ref = phone
+    c.courier_type = body.courier_type
+    if body.location_ids:
+        locs = (await session.execute(select(Location).where(Location.id.in_(body.location_ids)))).scalars().all()
+        c.locations = list(locs)
+    else:
+        c.locations = []
+    session.add(c)
+    await session.flush()
+    await write_audit(
+        session,
+        actor_type="admin",
+        actor_id=None,
+        entity_type="courier",
+        entity_id=str(c.id),
+        action="updated",
+        payload={"phone": phone, "courier_type": body.courier_type},
+    )
+    return CourierAdminOut(
+        id=c.id,
+        external_ref=c.external_ref,
+        full_name=c.full_name,
+        phone=c.phone,
+        courier_type=c.courier_type,
+        status=c.status,
+        location_ids=[loc.id for loc in c.locations],
+    )
 
 
 @router.patch("/couriers/{courier_id}/status", response_model=CourierAdminOut)

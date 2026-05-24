@@ -100,6 +100,13 @@ class CourierCreate(BaseModel):
     location_ids: list[uuid.UUID] = []
 
 
+class CourierUpdate(BaseModel):
+    full_name: str = Field(min_length=1)
+    phone: str = Field(min_length=1, max_length=32)
+    courier_type: CourierType = "teal"
+    location_ids: list[uuid.UUID] = []
+
+
 class CourierLocationsBody(BaseModel):
     location_ids: list[uuid.UUID] = []
 

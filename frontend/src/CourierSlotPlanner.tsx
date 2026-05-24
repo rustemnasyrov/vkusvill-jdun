@@ -655,12 +655,14 @@ function CourierManager({
   const [couriers, setCouriers] = useState<CourierDto[]>([]);
   const [assignments, setAssignments] = useState<AssignmentDto[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingCourier, setEditingCourier] = useState<CourierDto | null>(null);
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [courierType, setCourierType] = useState<ShiftSlot["courier_type"]>("teal");
   const [locationIds, setLocationIds] = useState<string[]>(locations.map((location) => location.id));
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [savingCourier, setSavingCourier] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -687,16 +689,41 @@ function CourierManager({
     void loadData();
   }, [loadData]);
 
-  async function createCourier() {
+  function openCreateCourier() {
+    setEditingCourier(null);
+    setFullName("");
+    setPhone("");
+    setCourierType("teal");
+    setLocationIds(locations.map((location) => location.id));
+    setModalOpen(true);
+  }
+
+  function openEditCourier(courier: CourierDto) {
+    setEditingCourier(courier);
+    setFullName(courier.full_name);
+    setPhone(courier.phone ?? courier.external_ref ?? "");
+    setCourierType(courier.courier_type);
+    setLocationIds(courier.location_ids);
+    setModalOpen(true);
+  }
+
+  function closeCourierModal() {
+    setModalOpen(false);
+    setEditingCourier(null);
+  }
+
+  async function saveCourier() {
     setError(null);
     setMessage(null);
     if (!fullName.trim() || !phone.trim()) {
       setError("Заполните ФИО и телефон");
       return;
     }
+    setSavingCourier(true);
     try {
-      const response = await fetch(`${API}/admin/couriers`, {
-        method: "POST",
+      const isEdit = Boolean(editingCourier);
+      const response = await fetch(isEdit ? `${API}/admin/couriers/${editingCourier!.id}` : `${API}/admin/couriers`, {
+        method: isEdit ? "PUT" : "POST",
         headers: adminHeaders(accessToken),
         body: JSON.stringify({
           full_name: fullName.trim(),
@@ -710,11 +737,13 @@ function CourierManager({
       setPhone("");
       setCourierType("teal");
       setLocationIds(locations.map((location) => location.id));
-      setModalOpen(false);
-      setMessage("Курьер добавлен.");
+      closeCourierModal();
+      setMessage(isEdit ? "Курьер обновлён." : "Курьер добавлен.");
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось добавить курьера");
+      setError(e instanceof Error ? e.message : "Не удалось сохранить курьера");
+    } finally {
+      setSavingCourier(false);
     }
   }
 
@@ -758,7 +787,7 @@ function CourierManager({
       {modalOpen ? (
         <div style={{ position: "fixed", inset: 0, background: "rgb(15 23 42 / 0.35)", display: "grid", placeItems: "center", zIndex: 50, padding: 16 }}>
           <div style={{ width: "min(560px, 100%)", background: "#fff", borderRadius: 18, padding: 20, boxShadow: "0 24px 80px rgb(15 23 42 / 0.25)" }}>
-            <h2 style={{ margin: "0 0 14px", fontSize: 22 }}>Новый курьер</h2>
+            <h2 style={{ margin: "0 0 14px", fontSize: 22 }}>{editingCourier ? "Редактировать курьера" : "Новый курьер"}</h2>
             <div style={{ display: "grid", gap: 12 }}>
               <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#6b7280" }}>
                 ФИО
@@ -797,8 +826,10 @@ function CourierManager({
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
-              <button type="button" onClick={() => setModalOpen(false)} style={{ ...smallButtonStyle, width: "auto", padding: "9px 14px" }}>Отмена</button>
-              <button type="button" onClick={() => void createCourier()} style={{ padding: "9px 16px", border: "none", borderRadius: 10, background: "#1D9E75", color: "#fff", fontWeight: 700 }}>Добавить</button>
+              <button type="button" onClick={closeCourierModal} style={{ ...smallButtonStyle, width: "auto", padding: "9px 14px" }}>Отмена</button>
+              <button type="button" disabled={savingCourier} onClick={() => void saveCourier()} style={{ padding: "9px 16px", border: "none", borderRadius: 10, background: savingCourier ? "#9ca3af" : "#1D9E75", color: "#fff", fontWeight: 700 }}>
+                {savingCourier ? "Сохраняем..." : editingCourier ? "Сохранить" : "Добавить"}
+              </button>
             </div>
           </div>
         </div>
@@ -811,7 +842,7 @@ function CourierManager({
           placeholder="Поиск по ФИО или телефону"
           style={{ flex: 1, minWidth: 220, padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 10 }}
         />
-        <button type="button" onClick={() => setModalOpen(true)} style={{ padding: "10px 16px", border: "none", borderRadius: 10, background: "#1D9E75", color: "#fff", fontWeight: 700 }}>
+        <button type="button" onClick={openCreateCourier} style={{ padding: "10px 16px", border: "none", borderRadius: 10, background: "#1D9E75", color: "#fff", fontWeight: 700 }}>
           + Добавить
         </button>
       </div>
@@ -864,13 +895,22 @@ function CourierManager({
                     </span>
                   </td>
                   <td className="courier-col-action">
-                    <button
-                      type="button"
-                      onClick={() => void setCourierStatus(courier, courier.status === "active" ? "blocked" : "active")}
-                      style={{ ...smallButtonStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}
-                    >
-                      {courier.status === "active" ? "Блок" : "Вернуть"}
-                    </button>
+                    <div className="courier-row-actions">
+                      <button
+                        type="button"
+                        onClick={() => openEditCourier(courier)}
+                        style={{ ...smallButtonStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}
+                      >
+                        Править
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void setCourierStatus(courier, courier.status === "active" ? "blocked" : "active")}
+                        style={{ ...smallButtonStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}
+                      >
+                        {courier.status === "active" ? "Блок" : "Вернуть"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
