@@ -1282,6 +1282,7 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
   const [locationsOpen, setLocationsOpen] = useState(false);
   const [copyWeekOpen, setCopyWeekOpen] = useState(false);
   const [copyDayDate, setCopyDayDate] = useState<string | null>(null);
+  const [visibleTypes, setVisibleTypes] = useState<ShiftSlot["courier_type"][]>(["teal", "blue", "amber", "purple"]);
   const [locationId, setLocationId] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -1290,7 +1291,8 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
   const weekMonday = useMemo(() => addDays(startOfIsoWeekMonday(new Date()), weekOffset * 7), [weekOffset]);
   const weekDates = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekMonday, i)), [weekMonday]);
   const weekKeys = useMemo(() => new Set(weekDates.map(localDateInputValue)), [weekDates]);
-  const weekSlots = slots.filter((s) => weekKeys.has(s.date));
+  const visibleTypeSet = useMemo(() => new Set(visibleTypes), [visibleTypes]);
+  const weekSlots = slots.filter((s) => weekKeys.has(s.date) && visibleTypeSet.has(s.type));
 
   useEffect(() => {
     if (!locationId && locations.length) setLocationId(locations[0].id);
@@ -1568,13 +1570,24 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
           Копировать неделю
         </button>
         <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          {Object.entries(TYPE_STYLES).map(([k, st]) => (
-            <span key={k} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#6b7280" }}>
-              <span style={{ width: 10, height: 10, borderRadius: 3, background: st.bg, border: `1px solid ${st.border}`, display: "inline-block" }} />
-              {TYPE_LABEL[k as ShiftSlot["courier_type"]]}
-            </span>
-          ))}
+        <div className="slot-type-filters" aria-label="Фильтр типов слотов">
+          {Object.entries(TYPE_STYLES).map(([k, st]) => {
+            const type = k as ShiftSlot["courier_type"];
+            const checked = visibleTypeSet.has(type);
+            return (
+              <label key={k} className={checked ? "slot-type-filter slot-type-filter-active" : "slot-type-filter"}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => {
+                    setVisibleTypes((prev) => (e.target.checked ? [...prev, type] : prev.filter((item) => item !== type)));
+                  }}
+                />
+                <span style={{ width: 10, height: 10, borderRadius: 3, background: st.bg, border: `1px solid ${st.border}`, display: "inline-block" }} />
+                {TYPE_LABEL[type]}
+              </label>
+            );
+          })}
         </div>
         <button
           onClick={() => openNew(localDateInputValue(weekDates[0]))}
@@ -1643,7 +1656,7 @@ export default function CourierSlotPlanner({ accessToken, locations, adminName, 
                 </button>
               </div>
               <div className="slot-timeline-cell">
-                <DayRow date={d} daySlots={slots.filter((s) => s.date === dateKey)} isToday={today} onSlotClick={openEdit} onAreaClick={openNew} />
+                <DayRow date={d} daySlots={weekSlots.filter((s) => s.date === dateKey)} isToday={today} onSlotClick={openEdit} onAreaClick={openNew} />
               </div>
             </div>
           );

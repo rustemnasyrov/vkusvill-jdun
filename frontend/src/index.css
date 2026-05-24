@@ -274,6 +274,40 @@ body {
   color: #1d9e75;
 }
 
+.slot-type-filters {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.slot-type-filter {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #6b7280;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+  padding: 5px 8px;
+  user-select: none;
+}
+
+.slot-type-filter input {
+  accent-color: #1d9e75;
+  cursor: pointer;
+  height: 14px;
+  margin: 0;
+  width: 14px;
+}
+
+.slot-type-filter-active {
+  background: #fff;
+  border-color: #d1d5db;
+  color: #374151;
+}
+
 .courier-login-page {
   align-items: center;
   background:
