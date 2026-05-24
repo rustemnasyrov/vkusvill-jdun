@@ -4,7 +4,7 @@ import type { AssignmentDto, CourierDto, ShiftSlot } from "./types";
 
 const API = "/api";
 const DAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
-const WEEK_COUNT = 4;
+const WEEK_COUNT = 5;
 const TYPE_LABEL: Record<ShiftSlot["courier_type"], string> = {
   teal: "Пеший",
   blue: "Вело",
@@ -65,15 +65,14 @@ function storedCourier(): CourierDto | null {
 export default function CourierSelfSignup() {
   const [courier, setCourier] = useState<CourierDto | null>(() => storedCourier());
   const [phone, setPhone] = useState("");
-  const [periodOffset, setPeriodOffset] = useState(0);
+  const [mode, setMode] = useState<"signup" | "schedule">("signup");
   const [slots, setSlots] = useState<ShiftSlot[]>([]);
   const [assignments, setAssignments] = useState<AssignmentDto[]>([]);
-  const [loading, setLoading] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const firstMonday = useMemo(() => addDays(startOfIsoWeekMonday(new Date()), periodOffset * WEEK_COUNT * 7), [periodOffset]);
+  const firstMonday = useMemo(() => startOfIsoWeekMonday(new Date()), []);
   const weeks = useMemo(
     () =>
       Array.from({ length: WEEK_COUNT }, (_, weekIndex) => {
@@ -101,7 +100,6 @@ export default function CourierSelfSignup() {
 
   const loadSchedule = useCallback(async () => {
     if (!courier) return;
-    setLoading(true);
     setError(null);
     setMessage(null);
     try {
@@ -119,8 +117,6 @@ export default function CourierSelfSignup() {
       setAssignments(await assignmentsResponse.json());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось загрузить слоты");
-    } finally {
-      setLoading(false);
     }
   }, [courier, firstMonday]);
 
@@ -239,13 +235,14 @@ export default function CourierSelfSignup() {
       </header>
 
       <section className="courier-self-toolbar">
-        <button type="button" onClick={() => setPeriodOffset((value) => value - 1)}>{"<"}</button>
-        <strong>
-          {formatDate(weeks[0].monday)} - {formatDate(addDays(weeks[weeks.length - 1].monday, 6))}
-        </strong>
-        <button type="button" onClick={() => setPeriodOffset((value) => value + 1)}>{">"}</button>
-        <button type="button" onClick={() => setPeriodOffset(0)}>Сегодня</button>
-        <button type="button" onClick={() => void loadSchedule()} disabled={loading}>{loading ? "Загрузка..." : "Обновить"}</button>
+        <div className="courier-mode-tabs" role="tablist" aria-label="Режимы самозаписи">
+          <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")}>
+            Запись
+          </button>
+          <button type="button" className={mode === "schedule" ? "active" : ""} onClick={() => setMode("schedule")}>
+            Моё расписание
+          </button>
+        </div>
       </section>
 
       {message ? <p className="courier-message">{message}</p> : null}
@@ -261,11 +258,13 @@ export default function CourierSelfSignup() {
               <div className="courier-week-days">
                 {week.days.map((day, dayIndex) => {
                   const dateKey = localDateInputValue(day);
+                  const hasAssignedSlot = slots.some((slot) => localDateInputValue(new Date(slot.starts_at)) === dateKey && assignedShiftIds.has(slot.id));
                   const daySlots = slots
                     .filter((slot) => localDateInputValue(new Date(slot.starts_at)) === dateKey)
+                    .filter((slot) => mode === "signup" || assignedShiftIds.has(slot.id))
                     .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
                   return (
-                    <div key={dateKey} className="courier-day-row">
+                    <div key={dateKey} className={hasAssignedSlot ? "courier-day-row courier-day-row-assigned" : "courier-day-row"}>
                       <div className="courier-day-label">
                         <strong>{DAYS_RU[dayIndex]}</strong>
                         <span>{formatDate(day)}</span>
@@ -298,7 +297,7 @@ export default function CourierSelfSignup() {
                             </button>
                           );
                         })}
-                        {!daySlots.length ? <span className="courier-no-slots">нет слотов</span> : null}
+                        {!daySlots.length ? <span className="courier-no-slots">{mode === "signup" ? "нет слотов" : "нет записей"}</span> : null}
                       </div>
                     </div>
                   );
