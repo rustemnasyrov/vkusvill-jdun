@@ -40,7 +40,7 @@ function Logo() {
 
 export default function AdminSchedule() {
   const [token, setToken] = useState("");
-  const [loginUser, setLoginUser] = useState("admin");
+  const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [displayName, setDisplayName] = useState("");
@@ -106,7 +106,7 @@ export default function AdminSchedule() {
       const j = (await r.json()) as { username?: string };
       setToken(saved);
       setDisplayName(j.username ?? "");
-      setLoginUser(j.username ?? "admin");
+      setLoginUser(j.username ?? "master");
       await refreshLocations(saved);
     })();
   }, [refreshLocations]);

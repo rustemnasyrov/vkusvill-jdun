@@ -45,7 +45,7 @@ Postgres из этого compose **не пробрасывается на хос
 ### Вход администратора
 
 - На фронте: вкладка **«Настройка расписания»** → **«Вход администратора»**.
-- В Docker по умолчанию: `ADMIN_USERNAME=admin`, `ADMIN_PASSWORD=dev-password-change-me`, `JWT_SECRET` — см. [docker-compose.yml](docker-compose.yml). Свои значения:  
+- В Docker по умолчанию: `ADMIN_USERNAME=master`, `ADMIN_PASSWORD=vkusvill`, `JWT_SECRET` — см. [docker-compose.yml](docker-compose.yml). Свои значения:  
   `ADMIN_PASSWORD=... JWT_SECRET=... docker compose up --build`.
 - После входа выдаётся **JWT** (Bearer); во вкладке «Authorize» в Swagger можно вставить тот же токен, что вернул `POST /auth/admin/login`.
 - **Legacy:** если задан `ADMIN_TOKEN`, он дополнительно принимается как статический Bearer (без логина) — для скриптов; интерфейс это не использует.

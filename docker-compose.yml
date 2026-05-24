@@ -23,8 +23,8 @@ services:
       - "9000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://courier:courier@postgres:5432/courier_shifts
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-dev-password-change-me}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-master}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-vkusvill}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       # Опционально: прежний статический Bearer (вместо входа по JWT), см. README
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}

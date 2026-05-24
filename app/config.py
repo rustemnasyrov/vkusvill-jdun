@@ -7,9 +7,9 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://courier:courier@localhost:5432/courier_shifts"
 
-    admin_username: str = "admin"
+    admin_username: str = "master"
     admin_password: str = Field(
-        default="dev-password-change-me",
+        default="vkusvill",
         description="Пароль для POST /auth/admin/login",
     )
     jwt_secret: str = Field(
