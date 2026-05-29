@@ -51,9 +51,13 @@ services:
       - api
     labels:
       - "traefik.enable=true"
+      - "traefik.http.routers.jdun-http.rule=Host(`jdun.pkbtrend.ru`)"
+      - "traefik.http.routers.jdun-http.entrypoints=http"
+      - "traefik.http.routers.jdun-http.middlewares=jdun-https"
+      - "traefik.http.middlewares.jdun-https.redirectscheme.scheme=https"
       - "traefik.http.routers.jdun.rule=Host(`jdun.pkbtrend.ru`)"
-      - "traefik.http.routers.jdun.entrypoints=websecure"
-      - "traefik.http.routers.jdun.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.jdun.entrypoints=https"
+      - "traefik.http.routers.jdun.tls=true"
       - "traefik.http.services.jdun.loadbalancer.server.port=5173"
     networks:
       - proxy
